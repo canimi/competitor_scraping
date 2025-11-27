@@ -148,7 +148,7 @@ def analyze_with_gemini(search_data, brand, product_name, currency_code):
     }}
     """
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GOOGLE_KEY}"
     headers = {'Content-Type': 'application/json'}
     data = {
         "contents": [{"parts": [{"text": prompt}]}], 
@@ -257,3 +257,4 @@ if start_btn:
                 st.json(search_results)
     else:
         st.error("Google araması sonuç döndürmedi.")
+
