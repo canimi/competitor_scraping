@@ -3,8 +3,6 @@ import pandas as pd
 import os
 import json
 import re
-from deep_translator import GoogleTranslator
-from datetime import datetime
 import google.generativeai as genai
 import requests
 
@@ -22,19 +20,19 @@ st.sidebar.markdown(
     unsafe_allow_html=True
 )
 
-# --- API KEY KONTROLÜ (GOOGLE + SERPER) ---
+# --- API KEY KONTROLÜ ---
 # Google Gemini Key
 GOOGLE_KEY = os.environ.get("GOOGLE_API_KEY")
 if not GOOGLE_KEY:
     GOOGLE_KEY = st.sidebar.text_input("1. Google API Key:", type="password")
 
-# Serper Search Key (Yeni)
+# Serper Search Key
 SERPER_KEY = os.environ.get("SERPER_API_KEY")
 if not SERPER_KEY:
     SERPER_KEY = st.sidebar.text_input("2. Serper API Key (serper.dev):", type="password")
 
 if not GOOGLE_KEY or not SERPER_KEY:
-    st.warning("⚠️ Lütfen her iki anahtarı da giriniz (Google AI + Serper Dev).")
+    st.warning("⚠️ Lütfen Google ve Serper anahtarlarını giriniz.")
     st.stop()
 
 # --- GOOGLE MODEL KURULUMU ---
@@ -123,46 +121,21 @@ def calculate_prices(raw_price_str, currency_code):
     price_usd = price_tl / LIVE_RATES.get("USD", 1)
     return amount, round(price_tl, 2), round(price_usd, 2)
 
-def translate_query_text(text, target_lang):
-    try:
-        if target_lang == "tr": return text
-        return GoogleTranslator(source='auto', target=target_lang).translate(text)
-    except:
-        return text
-
-def translate_result_to_tr(text):
-    try:
-        return GoogleTranslator(source='auto', target='tr').translate(text)
-    except:
-        return text
-
 # --- SERPER (GOOGLE) ARAMA MOTORU ---
-def search_with_serper(brand, country, translated_query):
-    """
-    Serper.dev API kullanarak gerçek Google araması yapar.
-    Bu yöntem DuckDuckGo gibi bloklanmaz.
-    """
+def search_with_serper(brand, country, query):
     url = "https://google.serper.dev/search"
-    
-    # Ülke ayarları (Daha isabetli sonuç için)
     country_conf = COUNTRIES.get(country, {})
-    gl = country_conf.get("gl", "us") # Coğrafi konum
-    hl = country_conf.get("hl", "en") # Dil
     
-    # Arama Sorgusu
-    search_query = f"{brand} {translated_query} price"
+    # Otomatik çeviri yerine Google'a bırakıyoruz, daha iyi sonuç verir
+    search_query = f"{brand} {country} {query} price"
     
     payload = json.dumps({
         "q": search_query,
-        "gl": gl,
-        "hl": hl,
-        "num": 10 # 10 Sonuç getir
+        "gl": country_conf.get("gl", "us"),
+        "hl": country_conf.get("hl", "en"),
+        "num": 10
     })
-    
-    headers = {
-        'X-API-KEY': SERPER_KEY,
-        'Content-Type': 'application/json'
-    }
+    headers = {'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json'}
     
     try:
         response = requests.request("POST", url, headers=headers, data=payload)
@@ -170,51 +143,50 @@ def search_with_serper(brand, country, translated_query):
     except Exception as e:
         return None
 
-def process_with_gemini(search_data, brand, translated_query, currency_hint):
-    """Google'dan gelen JSON verisini Gemini'ye yorumlatır"""
-    
-    # Serper'dan gelen veriyi metne döküyoruz
+def process_with_gemini(search_data, brand, query, currency_hint):
     context_text = ""
     if "organic" in search_data:
         for item in search_data["organic"]:
             title = item.get("title", "")
             link = item.get("link", "")
             snippet = item.get("snippet", "")
-            price = item.get("price", "") # Bazen Google direkt fiyatı bulur
+            price = item.get("price", "")
             currency = item.get("currency", "")
-            
-            context_text += f"Product: {title}\nLink: {link}\nDesc: {snippet}\nPrice: {price} {currency}\n---\n"
+            context_text += f"Product: {title}\nLink: {link}\nSnippet: {snippet}\nPrice: {price} {currency}\n---\n"
     
     if not context_text:
-        return None, "Google arama sonucunda ürün bulunamadı."
+        return None, "Google arama sonucunda anlamlı veri bulunamadı."
 
-    # Gemini Prompt
+    # GEMINI PRO İÇİN PROMPT
     prompt = f"""
-    You are a product extractor.
-    Source Data (Google Search Results):
+    You are a data extractor.
+    Context:
     {context_text}
     
-    Task: Find products matching "{translated_query}" for brand "{brand}".
+    Task: Find products matching "{query}" for brand "{brand}".
     Currency Hint: {currency_hint}
     
     Instructions:
     1. Extract Product Name, Price, URL.
-    2. Be careful with prices. If you see '1200 RSD', keep it.
-    3. Return ONLY JSON.
+    2. Try to capture the Price from snippet if not explicitly stated.
+    3. Return ONLY valid JSON.
     
-    JSON:
+    JSON Format:
     {{ "products": [ {{ "name": "...", "price": "...", "url": "..." }} ] }}
     """
     
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-        return json.loads(response.text), None
+        # GÜVENLİ MODEL: GEMINI PRO (En stabil versiyon)
+        model = genai.GenerativeModel("gemini-pro")
+        response = model.generate_content(prompt)
+        
+        # Temizlik (Pro bazen markdown atar)
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean_text), None
     except Exception as e:
         return None, f"AI Analiz Hatası: {e}"
 
 # --- ANA EKRAN ---
-
 st.markdown(f"""
 <h2 style='color: #333;'>🌍 {selected_brand} <span style='color: #999; font-weight: normal;'>|</span> {selected_country}</h2>
 """, unsafe_allow_html=True)
@@ -223,27 +195,23 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
     if not query_turkish:
         st.warning("Lütfen ürün adı giriniz.")
     else:
-        with st.status("Google (Serper) üzerinden veri çekiliyor...", expanded=True) as status:
-            lang_map = {"Türkiye":"tr", "Bulgaristan":"bg", "Yunanistan":"el", "Bosna Hersek":"bs", "Sırbistan":"sr", "İngiltere":"en", "Almanya":"de", "Romanya":"ro", "Rusya":"ru"}
-            target_lang = lang_map.get(selected_country, "en")
+        with st.status("Google üzerinden veri çekiliyor...", expanded=True) as status:
+            st.write(f"🔍 Arama: **{query_turkish}**")
             
-            translated_query = translate_query_text(query_turkish, target_lang)
-            st.write(f"🔍 Arama: **{translated_query}**")
-            
-            # 1. SERPER İLE ARAMA
-            serper_result = search_with_serper(selected_brand, selected_country, translated_query)
+            # 1. SERPER
+            serper_result = search_with_serper(selected_brand, selected_country, query_turkish)
             
             if serper_result and "organic" in serper_result:
-                # 2. GEMINI İLE İŞLEME
+                # 2. GEMINI PRO
                 target_currency = COUNTRIES[selected_country]["curr"]
-                result, error_msg = process_with_gemini(serper_result, selected_brand, translated_query, target_currency)
+                result, error_msg = process_with_gemini(serper_result, selected_brand, query_turkish, target_currency)
                 
                 if error_msg:
                     st.error(error_msg)
                 
                 status.update(label="İşlem Tamamlandı", state="complete")
             else:
-                st.error("Serper API sonuç döndürmedi (Kota veya bağlantı hatası).")
+                st.error("Serper API sonuç döndürmedi.")
                 result = None
 
         if result and "products" in result and result["products"]:
@@ -256,94 +224,5 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
             prices_usd = []
             prices_local = []
 
-            progress_bar = st.progress(0)
-            total_items = len(products)
-
-            for i, item in enumerate(products):
-                local_price_str = str(item.get("price", "0"))
-                local_name = item.get("name", "-")
-                link = item.get("url", "#")
-                
-                val_local, val_tl, val_usd = calculate_prices(local_price_str, target_currency)
-                name_tr = translate_result_to_tr(local_name)
-                
-                if val_tl > 0:
-                    prices_tl.append(val_tl)
-                    prices_usd.append(val_usd)
-                    prices_local.append(val_local)
-
-                table_data.append({
-                    "Ürün Adı (TR)": name_tr,
-                    "Orijinal İsim": local_name,
-                    "Yerel Fiyat": local_price_str,
-                    "TL Fiyatı": f"{val_tl:,.2f} ₺",
-                    "USD Fiyatı": f"${val_usd:,.2f}",
-                    "Link": link
-                })
-                
-                excel_lines.append(f"{name_tr}\t{local_name}\t{local_price_str}\t{val_tl:,.2f}\t{val_usd:,.2f}\t{link}")
-                progress_bar.progress((i + 1) / total_items)
-
-            progress_bar.empty()
-
-            def get_stats(price_list):
-                if not price_list: return 0, 0, 0
-                return sum(price_list)/len(price_list), min(price_list), max(price_list)
-
-            avg_tl, min_tl, max_tl = get_stats(prices_tl)
-            avg_usd, min_usd, max_usd = get_stats(prices_usd)
-            avg_loc, min_loc, max_loc = get_stats(prices_local)
-            
-            product_count = len(products)
-
-            st.markdown("---")
-            
-            # İSTATİSTİK PANELLERİ
-            st.markdown("##### 🇹🇷 Türk Lirası Analizi")
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Bulunan", f"{product_count}")
-            col2.metric("Ortalama", f"{avg_tl:,.0f} ₺")
-            col3.metric("En Düşük", f"{min_tl:,.0f} ₺")
-            col4.metric("En Yüksek", f"{max_tl:,.0f} ₺")
-            
-            st.markdown("##### 🇺🇸 USD Analizi")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Bulunan", f"{product_count}")
-            c2.metric("Ortalama", f"${avg_usd:,.2f}")
-            c3.metric("En Düşük", f"${min_usd:,.2f}")
-            c4.metric("En Yüksek", f"${max_usd:,.2f}")
-
-            st.markdown(f"##### 🏳️ Yerel Para ({target_currency})")
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Bulunan", f"{product_count}")
-            k2.metric("Ortalama", f"{avg_loc:,.2f}")
-            k3.metric("En Düşük", f"{min_loc:,.2f}")
-            k4.metric("En Yüksek", f"{max_loc:,.2f}")
-
-            st.markdown("---")
-
-            st.markdown("""<h3 style='color: #1c54b2; margin-top: 0;'>🛍️ Detaylı Ürün Analizi</h3>""", unsafe_allow_html=True)
-            
-            df = pd.DataFrame(table_data)
-            st.data_editor(
-                df,
-                column_config={
-                    "Link": st.column_config.LinkColumn("İncele", display_text="🔗 Ürüne Git"),
-                    "Ürün Adı (TR)": st.column_config.TextColumn("Ürün Adı (TR)", width="medium")
-                },
-                hide_index=True,
-                use_container_width=True
-            )
-
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("""
-                <div style="display: flex; align-items: center; justify-content: space-between;">
-                    <h3 style='color: #1D6F42; margin: 0;'>📊 Excel Formatı (TSV)</h3>
-                    <span style='color: #666; font-size: 14px;'>Tabloyu Kopyalamak İçin Buraya Tıkla ⤵</span>
-                </div>
-            """, unsafe_allow_html=True)
-            st.code("\n".join(excel_lines), language="text")
-            
-        else:
-            if not error_msg:
-                st.error(f"Sonuç bulunamadı.")
+            for item in products:
+                lo
