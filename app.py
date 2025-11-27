@@ -52,12 +52,8 @@ COUNTRIES = {
 
 BRANDS = ["LC Waikiki", "Sinsay", "Pepco", "Zara", "H&M", "Mango", "Primark", "English Home", "IKEA", "Jysk"]
 
-# --- YARDIMCI: GEMINI FLASH'A İSTEK ATMA (REST API) ---
+# --- YARDIMCI: GEMINI FLASH (REST API) ---
 def call_gemini_flash(prompt):
-    """
-    Doğrudan Google sunucusuna gider. SDK kullanmaz. Hata yapmaz.
-    Sadece 'gemini-1.5-flash' kullanır.
-    """
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_KEY}"
     headers = {'Content-Type': 'application/json'}
     data = {
@@ -142,7 +138,7 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
         with st.status("İşlemler yapılıyor...", expanded=True) as status:
             country_conf = COUNTRIES[selected_country]
             
-            # 1. ÇEVİRİ (AI İLE YAPALIM Kİ KÜTÜPHANE HATASI OLMASIN)
+            # 1. ÇEVİRİ
             trans_prompt = f"""Translate this Turkish text to the language used in {selected_country}. Return JSON: {{ "translated": "..." }} Text: "{query_turkish}" """
             trans_res = call_gemini_flash(trans_prompt)
             translated_query = trans_res.get("translated", query_turkish) if trans_res else query_turkish
@@ -156,5 +152,81 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
             if serper_data and "organic" in serper_data:
                 # 3. VERİ AYIKLAMA (AI FLASH)
                 context = ""
+                # HATA BURADAYDI, DÜZELTİLDİ:
                 for i in serper_data["organic"][:10]:
-                    context += f"Title: {i.get
+                    title = i.get('title', 'No Title')
+                    link = i.get('link', '#')
+                    snippet = i.get('snippet', '')
+                    price = i.get('price', '')
+                    context += f"Title: {title}\nLink: {link}\nDesc: {snippet}\nPrice: {price}\n---\n"
+                
+                extract_prompt = f"""
+                Extract products for "{selected_brand}" matching "{translated_query}".
+                Context: {context}
+                Currency Hint: {country_conf['curr']}
+                JSON Format: {{ "products": [ {{ "name": "...", "price": "...", "url": "..." }} ] }}
+                """
+                ai_result = call_gemini_flash(extract_prompt)
+                
+                status.update(label="Tamamlandı", state="complete")
+            else:
+                ai_result = None
+                st.error("Arama sonucu bulunamadı.")
+
+        if ai_result and "products" in ai_result:
+            products = ai_result["products"]
+            table_data = []
+            excel_lines = ["Ürün Adı (TR)\tOrijinal İsim\tYerel Fiyat\tTL Fiyatı\tUSD Fiyatı\tLink"]
+            
+            p_tl, p_usd, p_loc = [], [], []
+
+            for item in products:
+                loc_p = str(item.get("price", "0"))
+                name = item.get("name", "-")
+                url = item.get("url", "#")
+                
+                val_loc, val_tl, val_usd = calc_prices(loc_p, country_conf["curr"])
+                
+                if val_tl > 0:
+                    p_tl.append(val_tl); p_usd.append(val_usd); p_loc.append(val_loc)
+
+                table_data.append({
+                    "Ürün Adı": name,
+                    "Yerel Fiyat": loc_p,
+                    "TL Fiyatı": f"{val_tl:,.2f} ₺",
+                    "USD Fiyatı": f"${val_usd:,.2f}",
+                    "Link": url
+                })
+                excel_lines.append(f"{name}\t{name}\t{loc_p}\t{val_tl:,.2f}\t{val_usd:,.2f}\t{url}")
+
+            # İSTATİSTİKLER
+            def stats(l): return (sum(l)/len(l), min(l), max(l)) if l else (0,0,0)
+            avg_t, min_t, max_t = stats(p_tl)
+            avg_u, min_u, max_u = stats(p_usd)
+            avg_l, min_l, max_l = stats(p_loc)
+
+            st.markdown("---")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Ürün", f"{len(products)}")
+            c2.metric("Ortalama (TL)", f"{avg_t:,.0f} ₺")
+            c3.metric("En Düşük (TL)", f"{min_t:,.0f} ₺")
+            c4.metric("En Yüksek (TL)", f"{max_t:,.0f} ₺")
+            
+            st.markdown("---")
+            st.markdown(f"**Detaylı Analiz ({country_conf['curr']} / USD)**")
+            k1, k2 = st.columns(2)
+            k1.info(f"Ort: {avg_l:.2f} {country_conf['curr']} | Min: {min_l:.2f} | Max: {max_l:.2f}")
+            k2.success(f"Ort: ${avg_u:.2f} | Min: ${min_u:.2f} | Max: ${max_u:.2f}")
+
+            st.markdown("""<h3 style='color: #1c54b2;'>🛍️ Sonuçlar</h3>""", unsafe_allow_html=True)
+            st.data_editor(
+                pd.DataFrame(table_data),
+                column_config={"Link": st.column_config.LinkColumn("Git", display_text="🔗")},
+                hide_index=True,
+                use_container_width=True
+            )
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.code("\n".join(excel_lines), language="text")
+        else:
+            st.warning("Ürün bulunamadı.")
