@@ -3,8 +3,9 @@ import pandas as pd
 import os
 import json
 import re
-import google.generativeai as genai
-import requests
+from deep_translator import GoogleTranslator
+from datetime import datetime
+import requests # Sadece requests kullanacağız, Google kütüphanesi yok.
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="LCW Home Global", layout="wide", page_icon="🏠")
@@ -21,25 +22,16 @@ st.sidebar.markdown(
 )
 
 # --- API KEY KONTROLÜ ---
-# 1. Google Gemini Key (Beyin)
 GOOGLE_KEY = os.environ.get("GOOGLE_API_KEY")
 if not GOOGLE_KEY:
-    GOOGLE_KEY = st.sidebar.text_input("1. Google API Key (AI Studio):", type="password")
+    GOOGLE_KEY = st.sidebar.text_input("1. Google API Key:", type="password")
 
-# 2. Serper Search Key (Göz)
 SERPER_KEY = os.environ.get("SERPER_API_KEY")
 if not SERPER_KEY:
-    SERPER_KEY = st.sidebar.text_input("2. Serper API Key (serper.dev):", type="password")
+    SERPER_KEY = st.sidebar.text_input("2. Serper API Key:", type="password")
 
 if not GOOGLE_KEY or not SERPER_KEY:
-    st.warning("⚠️ Lütfen her iki anahtarı da giriniz. (Ücret çıkmaz, Free Tier kullanıyoruz)")
-    st.stop()
-
-# --- GOOGLE MODEL KURULUMU ---
-try:
-    genai.configure(api_key=GOOGLE_KEY)
-except Exception as e:
-    st.error(f"Google Key Hatalı: {e}")
+    st.warning("⚠️ Lütfen Google ve Serper anahtarlarını giriniz.")
     st.stop()
 
 # --- SABİTLER ---
@@ -119,10 +111,24 @@ def calculate_prices(raw_price_str, currency_code):
     price_usd = price_tl / LIVE_RATES.get("USD", 1)
     return amount, round(price_tl, 2), round(price_usd, 2)
 
+def translate_query_text(text, target_lang):
+    try:
+        if target_lang == "tr": return text
+        return GoogleTranslator(source='auto', target=target_lang).translate(text)
+    except:
+        return text
+
+def translate_result_to_tr(text):
+    try:
+        return GoogleTranslator(source='auto', target='tr').translate(text)
+    except:
+        return text
+
 # --- SERPER ARAMA ---
 def search_with_serper(brand, country, query):
     url = "https://google.serper.dev/search"
     country_conf = COUNTRIES.get(country, {})
+    
     search_query = f"{brand} {country} {query} price"
     
     payload = json.dumps({
@@ -138,7 +144,40 @@ def search_with_serper(brand, country, query):
     except Exception as e:
         return None
 
-# --- GEMINI ANALİZ (FLASH MODELİ - BEDAVA & HIZLI) ---
+# --- GEMINI DIRECT REST API (KÜTÜPHANESİZ ÇÖZÜM) ---
+def call_gemini_api_direct(prompt):
+    """
+    Python kütüphanesi yerine direkt Google sunucusuna HTTP isteği atar.
+    Bu yöntem 'Library Version' hatalarından etkilenmez.
+    """
+    # Gemini 1.5 Flash Endpoint'i
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_KEY}"
+    
+    headers = {'Content-Type': 'application/json'}
+    
+    data = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }],
+        "generationConfig": {
+            "response_mime_type": "application/json"
+        }
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code != 200:
+            return None, f"Google API Hatası ({response.status_code}): {response.text}"
+            
+        result = response.json()
+        # Google'ın karmaşık JSON yapısından metni çıkarıyoruz
+        text_content = result['candidates'][0]['content']['parts'][0]['text']
+        return json.loads(text_content), None
+        
+    except Exception as e:
+        return None, f"Bağlantı Hatası: {e}"
+
 def process_with_gemini(search_data, brand, query, currency_hint):
     context_text = ""
     if "organic" in search_data:
@@ -151,7 +190,7 @@ def process_with_gemini(search_data, brand, query, currency_hint):
             context_text += f"Product: {title}\nLink: {link}\nSnippet: {snippet}\nPrice: {price} {currency}\n---\n"
     
     if not context_text:
-        return None, "Google arama sonucunda anlamlı veri bulunamadı."
+        return None, "Google arama sonucunda veri bulunamadı."
 
     prompt = f"""
     You are a data extractor.
@@ -170,14 +209,8 @@ def process_with_gemini(search_data, brand, query, currency_hint):
     {{ "products": [ {{ "name": "...", "price": "...", "url": "..." }} ] }}
     """
     
-    try:
-        # GÜVENLİ VE HIZLI MODEL: GEMINI 1.5 FLASH
-        # Bu modelin ücretsiz kotası çok yüksektir (Günde 1500 istek).
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-        return json.loads(response.text), None
-    except Exception as e:
-        return None, f"AI Analiz Hatası: {e}"
+    # KÜTÜPHANE YERİNE DİREKT API ÇAĞRISI
+    return call_gemini_api_direct(prompt)
 
 # --- ANA EKRAN ---
 st.markdown(f"""
@@ -188,16 +221,20 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
     if not query_turkish:
         st.warning("Lütfen ürün adı giriniz.")
     else:
-        with st.status("Veri çekiliyor (Bedava Mod)...", expanded=True) as status:
-            st.write(f"🔍 Arama: **{query_turkish}**")
+        with st.status("Veri çekiliyor (Direct API Mode)...", expanded=True) as status:
+            lang_map = {"Türkiye":"tr", "Bulgaristan":"bg", "Yunanistan":"el", "Bosna Hersek":"bs", "Sırbistan":"sr", "İngiltere":"en", "Almanya":"de", "Romanya":"ro", "Rusya":"ru"}
+            target_lang = lang_map.get(selected_country, "en")
+            
+            translated_query = translate_query_text(query_turkish, target_lang)
+            st.write(f"🔍 Arama: **{translated_query}**")
             
             # 1. SERPER
-            serper_result = search_with_serper(selected_brand, selected_country, query_turkish)
+            serper_result = search_with_serper(selected_brand, selected_country, translated_query)
             
             if serper_result and "organic" in serper_result:
-                # 2. GEMINI FLASH
+                # 2. GEMINI (DIRECT API)
                 target_currency = COUNTRIES[selected_country]["curr"]
-                result, error_msg = process_with_gemini(serper_result, selected_brand, query_turkish, target_currency)
+                result, error_msg = process_with_gemini(serper_result, selected_brand, translated_query, target_currency)
                 
                 if error_msg:
                     st.error(error_msg)
@@ -223,6 +260,7 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
                 link = item.get("url", "#")
                 
                 val_local, val_tl, val_usd = calculate_prices(local_price_str, target_currency)
+                name_tr = translate_result_to_tr(local_name)
                 
                 if val_tl > 0:
                     prices_tl.append(val_tl)
@@ -230,14 +268,15 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
                     prices_local.append(val_local)
 
                 table_data.append({
-                    "Ürün Adı": local_name,
+                    "Ürün Adı (TR)": name_tr,
+                    "Orijinal İsim": local_name,
                     "Yerel Fiyat": local_price_str,
                     "TL Fiyatı": f"{val_tl:,.2f} ₺",
                     "USD Fiyatı": f"${val_usd:,.2f}",
                     "Link": link
                 })
                 
-                excel_lines.append(f"{local_name}\t{local_name}\t{local_price_str}\t{val_tl:,.2f}\t{val_usd:,.2f}\t{link}")
+                excel_lines.append(f"{name_tr}\t{local_name}\t{local_price_str}\t{val_tl:,.2f}\t{val_usd:,.2f}\t{link}")
 
             # İSTATİSTİKLER
             def get_stats(l): return (sum(l)/len(l), min(l), max(l)) if l else (0,0,0)
