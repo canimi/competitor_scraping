@@ -12,7 +12,7 @@ import requests
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="LCW Home Global", layout="wide", page_icon="🏠")
 
-# --- YAN MENÜ (LCW STİLİ) ---
+# --- YAN MENÜ ---
 st.sidebar.markdown(
     """
     <div style="padding: 15px; background-color: #f0f2f6; border-left: 5px solid #1c54b2; border-radius: 4px; margin-bottom: 20px;">
@@ -34,10 +34,9 @@ else:
 
 if not API_KEY:
     st.error("🚨 HATA: Çalışmak için Google API Anahtarı gereklidir.")
-    st.info("Ya Streamlit Secrets kısmına ekleyin ya da sol menüden girin.")
     st.stop()
 
-# --- GOOGLE MODEL KURULUMU (GÜVENLİ MOD) ---
+# --- GOOGLE MODEL KURULUMU ---
 try:
     genai.configure(api_key=API_KEY)
 except Exception as e:
@@ -138,64 +137,59 @@ def translate_result_to_tr(text):
     except:
         return text
 
-# --- ARAMA MOTORU ---
+# --- ARAMA VE AI İŞLEMLERİ ---
 def search_and_process_with_google(brand, country, translated_query, currency_hint):
     country_info = COUNTRIES.get(country, {})
     region_code = country_info.get("region", "wt-wt")
     
+    # Arama Sorgusu
     search_query = f"{brand} {country} {translated_query} price"
         
     try:
+        # Backend='html' kullanıyoruz
         with DDGS() as ddgs:
             results = list(ddgs.text(
                 search_query, 
                 region=region_code, 
                 backend="html", 
-                max_results=10
+                max_results=12 # Sonuç sayısını artırdık
             ))
         
         if not results:
-            return None, "Arama Sonucu Bulunamadı"
+            return None, "Arama motoru sonuç döndürmedi."
             
         search_context = ""
         for res in results:
             search_context += f"Title: {res['title']}\nLink: {res['href']}\nSnippet: {res['body']}\n---\n"
             
     except Exception as e:
-        return None, f"Arama Hatası: {e}"
+        return None, f"DuckDuckGo Hatası: {e}"
 
+    # GEMINI PROMPT
     prompt = f"""
-    You are a shopping assistant.
-    Search Context:
+    You are a data extraction bot.
+    Context:
     {search_context}
     
-    Task: Extract products matching "{translated_query}" for brand "{brand}".
-    Currency Hint: {currency_hint} (Look for symbols like лв, €, £, etc.)
+    Task: Find products matching "{translated_query}" for "{brand}".
+    Currency Hint: {currency_hint}
     
     Instructions:
-    - Extract Name, Price, URL.
-    - If price is not explicitly clear, try to find it in the snippet.
-    - Return ONLY JSON.
+    1. Extract Name, Price, URL.
+    2. Look for price patterns like '19.99', '20 лв', '20 BGN'.
+    3. Return ONLY JSON.
     
-    JSON:
+    JSON Format:
     {{ "products": [ {{ "name": "...", "price": "...", "url": "..." }} ] }}
     """
     
-    # MODEL SEÇİCİ (FLASH ÇALIŞMAZSA PRO DEVREYE GİRER)
     try:
+        # MODEL ADI GÜNCELLENDİ: gemini-1.5-flash
         model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
         return json.loads(response.text), None
-    except Exception:
-        # Flash hata verirse Pro'yu dene
-        try:
-            model = genai.GenerativeModel("gemini-pro")
-            response = model.generate_content(prompt)
-            # Gemini Pro bazen JSON tagleri ekler, temizleyelim
-            clean_text = response.text.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean_text), None
-        except Exception as e2:
-            return None, f"AI Modeli Hatası: {e2}"
+    except Exception as e:
+        return None, f"AI Modeli Hatası: {e}"
 
 # --- ANA EKRAN ---
 
@@ -300,7 +294,7 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
 
             st.markdown("---")
 
-            # TABLO (MAVİ BAŞLIK)
+            # TABLO
             st.markdown("""
                 <h3 style='color: #1c54b2; margin-top: 0;'>🛍️ Detaylı Ürün Analizi</h3>
             """, unsafe_allow_html=True)
@@ -332,4 +326,5 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
             st.code("\n".join(excel_lines), language="text")
             
         else:
-            st.error(f"Sonuç bulunamadı. '{selected_brand}' sitesi {selected_country} için erişilebilir olmayabilir.")
+            if not error_msg:
+                st.error(f"Sonuç bulunamadı. '{selected_brand}' sitesi {selected_country} için erişilebilir olmayabilir.")
