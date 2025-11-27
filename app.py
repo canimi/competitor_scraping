@@ -17,7 +17,7 @@ st.markdown("""
 </style>
 <div class="main-header">
     <h1 style='font-size:24px; margin:0;'>LCW HOME | GLOBAL INTELLIGENCE</h1>
-    <p style='font-size:12px; margin:0; opacity:0.8;'>Rakip Fiyat Analiz ve Takip Sistemi</p>
+    <p style='font-size:12px; margin:0; opacity:0.8;'>Rakip Fiyat Analiz ve Takip Sistemi (Flash Model)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -56,20 +56,16 @@ BRANDS = ["LC Waikiki", "Sinsay", "Pepco", "Zara Home", "H&M Home", "Jysk", "IKE
 def get_exchange_rates():
     """Güncel kurları çeker. Taban: TRY"""
     try:
-        # Base TRY alıyoruz, yani 1 TRY = X Yabancı Para
         url = "https://api.exchangerate-api.com/v4/latest/TRY"
         response = requests.get(url)
         data = response.json()
         rates = data.get("rates", {})
         
-        # Bize lazım olan: 1 Yabancı Para = Kaç TL? 
-        # API 1 TRY = 0.027 EUR veriyorsa, 1 EUR = 1/0.027 = 37 TL'dir.
         conversion_rates = {}
         for code, rate in rates.items():
             if rate > 0:
                 conversion_rates[code] = 1 / rate
         
-        # Bosna Markı (BAM) genelde EUR'a endekslidir (1 EUR = 1.95583 BAM)
         if "EUR" in conversion_rates:
             conversion_rates["BAM"] = conversion_rates["EUR"] / 1.95583
             
@@ -93,7 +89,7 @@ def search_serper(query, gl, hl):
         "q": query,
         "gl": gl,
         "hl": hl,
-        "num": 15 # İlk 15 sonuç yeterli
+        "num": 15
     })
     headers = {'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json'}
     
@@ -107,7 +103,6 @@ def search_serper(query, gl, hl):
 def analyze_with_gemini(search_data, brand, product_name, currency_code):
     """Gemini'ye sonuçları yorumlatır ve temiz JSON çıktısı ister"""
     
-    # 1. Arama sonuçlarını metne dök
     context_text = ""
     if "organic" in search_data:
         for item in search_data["organic"]:
@@ -120,7 +115,6 @@ def analyze_with_gemini(search_data, brand, product_name, currency_code):
     if not context_text:
         return None
 
-    # 2. Prompt Mühendisliği (Sorunları Çözen Kısım)
     prompt = f"""
     You are a pricing analyst AI. I will give you search results for the brand "{brand}" looking for the product "{product_name}".
     
@@ -148,7 +142,8 @@ def analyze_with_gemini(search_data, brand, product_name, currency_code):
     }}
     """
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GOOGLE_KEY}"
+    # --- DÜZELTİLEN KISIM: 'gemini-1.5-flash-001' (Sürüm numaralı Flash) ---
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key={GOOGLE_KEY}"
     headers = {'Content-Type': 'application/json'}
     data = {
         "contents": [{"parts": [{"text": prompt}]}], 
@@ -159,11 +154,10 @@ def analyze_with_gemini(search_data, brand, product_name, currency_code):
         res = requests.post(url, headers=headers, json=data)
         if res.status_code == 200:
             content = res.json()['candidates'][0]['content']['parts'][0]['text']
-            # Temizlik (bazen markdown ```json ile gelebilir)
             clean_json = content.replace("```json", "").replace("```", "").strip()
             return json.loads(clean_json)
         else:
-            st.error(f"AI Hatası: {res.text}")
+            st.error(f"AI Hatası (Flash): {res.status_code} | Mesaj: {res.text}")
             return None
     except Exception as e:
         st.error(f"AI Parse Hatası: {e}")
@@ -193,8 +187,8 @@ if start_btn:
     if not rates:
         st.stop()
         
-    usd_rate = rates.get("USD", 1.0) # 1 USD kaç TL
-    local_rate = rates.get(target_currency, 1.0) # 1 Yerel Para kaç TL
+    usd_rate = rates.get("USD", 1.0)
+    local_rate = rates.get(target_currency, 1.0)
     
     # 2. Çeviri
     q_local = translate_text(q_tr, country_conf["lang"])
@@ -206,7 +200,7 @@ if start_btn:
     
     if search_results:
         # 4. AI Analizi ve Parsing
-        with st.spinner("🤖 Yapay zeka fiyatları ayıklıyor ve filtreliyor..."):
+        with st.spinner("🤖 Yapay zeka (Flash) fiyatları ayıklıyor..."):
             ai_data = analyze_with_gemini(search_results, sel_brand, q_tr, target_currency)
         
         if ai_data and "products" in ai_data and len(ai_data["products"]) > 0:
@@ -220,9 +214,7 @@ if start_btn:
                 
                 if price_raw > 0:
                     price_tl = price_raw * local_rate
-                    price_usd = price_tl / usd_rate # (TL'ye çevirip sonra USD kuruna bölüyoruz veya direkt çapraz kur)
-                    # Doğrusu: price_raw (Yerel) * (1 Yerel kaç TL) = TL Fiyat
-                    # USD Fiyat = TL Fiyat / (1 USD kaç TL)
+                    price_usd = price_tl / usd_rate
                     
                     df_data.append({
                         "Ürün Adı": p.get("name"),
@@ -236,7 +228,6 @@ if start_btn:
                 st.success(f"✅ {len(df_data)} adet ürün bulundu ve analiz edildi.")
                 df = pd.DataFrame(df_data)
                 
-                # Tabloyu göster
                 st.dataframe(
                     df, 
                     column_config={
@@ -245,7 +236,6 @@ if start_btn:
                     use_container_width=True
                 )
                 
-                # İstatistikler
                 avg_price = pd.Series([float(x['Fiyat (TL)'].replace(' ₺','').replace(',','')) for x in df_data]).mean()
                 st.metric(label="Ortalama Fiyat (TL)", value=f"{avg_price:,.2f} ₺")
                 
@@ -257,4 +247,3 @@ if start_btn:
                 st.json(search_results)
     else:
         st.error("Google araması sonuç döndürmedi.")
-
