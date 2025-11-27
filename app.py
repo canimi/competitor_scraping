@@ -22,7 +22,14 @@ st.markdown("Yapay zeka ile **gerçek zamanlı** ve **global** fiyat analizi.")
 # --- SABİTLER ---
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 
-# Desteklenen Ülkeler
+# GÜNCEL MODEL LİSTESİ (2025 Revizyonu)
+# Perplexity eski uzun isimleri (llama-3.1-sonar...) kaldırdı.
+AVAILABLE_MODELS = [
+    "sonar-pro",       # En güçlüsü (Eski Large/Huge yerine)
+    "sonar",           # Hızlı ve ekonomik (Eski Small yerine)
+    "sonar-reasoning", # Mantık ağırlıklı
+]
+
 COUNTRIES = {
     "Türkiye": "TRY",
     "Almanya": "EUR",
@@ -40,19 +47,18 @@ COUNTRIES = {
 
 BRANDS = ["Sinsay", "Pepco", "Zara", "H&M", "Mango", "Primark", "English Home", "LC Waikiki", "Bershka", "Pull&Bear"]
 
-# Perplexity Model Listesi (Güncel)
-# Biri çalışmazsa diğerini seçebilmen için listeyi genişlettim.
-AVAILABLE_MODELS = [
-    "llama-3.1-sonar-large-128k-online",
-    "llama-3.1-sonar-huge-128k-online",
-    "llama-3.1-sonar-small-128k-online" # Bu hata vermişti ama listede dursun, belki düzelir.
-]
-
 # --- YAN MENÜ ---
-st.sidebar.header("⚙️ Ayarlar")
+st.sidebar.header("⚙️ Model Ayarları")
 
-# Model Seçimi (Hata alırsan buradan değiştirebilirsin)
-selected_model = st.sidebar.selectbox("AI Modeli", AVAILABLE_MODELS, index=0)
+# 1. Model Seçimi
+model_choice = st.sidebar.selectbox("AI Modeli Seç", AVAILABLE_MODELS, index=0)
+
+# 2. Manuel Model Girişi (Acil Durum Butonu)
+# Eğer Perplexity yarın yine isim değiştirirse, kodu güncellemeden buraya yeni ismi yazıp çalıştırabilirsin.
+custom_model = st.sidebar.text_input("Manuel Model Adı (Opsiyonel)", help="Listede olmayan yeni bir model adı girmeniz gerekirse burayı kullanın.")
+
+# Hangi modeli kullanacağız?
+FINAL_MODEL = custom_model if custom_model else model_choice
 
 st.sidebar.divider()
 st.sidebar.header("🔍 Arama Kriterleri")
@@ -121,8 +127,8 @@ def search_with_perplexity(brand, country, translated_query, currency_hint, mode
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.1,
-        "max_tokens": 1024,
         "return_citations": False
+        # max_tokens parametresi bazı yeni modellerde hata verebiliyor, gerekirse çıkarılabilir.
     }
 
     try:
@@ -138,7 +144,7 @@ def search_with_perplexity(brand, country, translated_query, currency_hint, mode
         st.error(f"HTTP Hatası: {err}")
         try:
             error_details = response.json()
-            st.warning("Perplexity Hata Mesajı:")
+            st.warning("⚠️ Perplexity API Mesajı:")
             st.json(error_details)
         except:
             pass
@@ -160,13 +166,13 @@ if st.sidebar.button("Fiyatları Getir 🚀"):
             status.update(label=f"Aranıyor: {translated} ({selected_country})", state="complete")
         
         # 2. API Sorgu
-        with st.spinner(f"🤖 Yapay zeka ({selected_model}) tarıyor..."):
+        with st.spinner(f"🤖 Yapay zeka ({FINAL_MODEL}) tarıyor..."):
             result = search_with_perplexity(
                 selected_brand, 
                 selected_country, 
                 translated, 
                 COUNTRIES[selected_country],
-                selected_model
+                FINAL_MODEL
             )
             
         # 3. Sonuç
