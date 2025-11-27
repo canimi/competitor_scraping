@@ -21,18 +21,18 @@ st.sidebar.markdown(
 )
 
 # --- API KEY KONTROLÜ ---
-# Google Gemini Key
+# 1. Google Gemini Key (Beyin)
 GOOGLE_KEY = os.environ.get("GOOGLE_API_KEY")
 if not GOOGLE_KEY:
-    GOOGLE_KEY = st.sidebar.text_input("1. Google API Key:", type="password")
+    GOOGLE_KEY = st.sidebar.text_input("1. Google API Key (AI Studio):", type="password")
 
-# Serper Search Key
+# 2. Serper Search Key (Göz)
 SERPER_KEY = os.environ.get("SERPER_API_KEY")
 if not SERPER_KEY:
     SERPER_KEY = st.sidebar.text_input("2. Serper API Key (serper.dev):", type="password")
 
 if not GOOGLE_KEY or not SERPER_KEY:
-    st.warning("⚠️ Lütfen Google ve Serper anahtarlarını giriniz.")
+    st.warning("⚠️ Lütfen her iki anahtarı da giriniz. (Ücret çıkmaz, Free Tier kullanıyoruz)")
     st.stop()
 
 # --- GOOGLE MODEL KURULUMU ---
@@ -101,7 +101,6 @@ def extract_price_number(price_str):
     if not price_str: return 0.0
     clean_str = str(price_str).replace(" ", "")
     clean_str = re.sub(r'[^\d.,]', '', clean_str)
-    
     if "," in clean_str and "." in clean_str:
         if clean_str.find(",") < clean_str.find("."):
             clean_str = clean_str.replace(",", "")
@@ -109,7 +108,6 @@ def extract_price_number(price_str):
             clean_str = clean_str.replace(".", "").replace(",", ".")
     elif "," in clean_str:
         clean_str = clean_str.replace(",", ".")
-        
     nums = re.findall(r"[-+]?\d*\.\d+|\d+", clean_str)
     return float(nums[0]) if nums else 0.0
 
@@ -121,12 +119,10 @@ def calculate_prices(raw_price_str, currency_code):
     price_usd = price_tl / LIVE_RATES.get("USD", 1)
     return amount, round(price_tl, 2), round(price_usd, 2)
 
-# --- SERPER (GOOGLE) ARAMA MOTORU ---
+# --- SERPER ARAMA ---
 def search_with_serper(brand, country, query):
     url = "https://google.serper.dev/search"
     country_conf = COUNTRIES.get(country, {})
-    
-    # Otomatik çeviri yerine Google'a bırakıyoruz, daha iyi sonuç verir
     search_query = f"{brand} {country} {query} price"
     
     payload = json.dumps({
@@ -136,13 +132,13 @@ def search_with_serper(brand, country, query):
         "num": 10
     })
     headers = {'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json'}
-    
     try:
         response = requests.request("POST", url, headers=headers, data=payload)
         return response.json()
     except Exception as e:
         return None
 
+# --- GEMINI ANALİZ (FLASH MODELİ - BEDAVA & HIZLI) ---
 def process_with_gemini(search_data, brand, query, currency_hint):
     context_text = ""
     if "organic" in search_data:
@@ -157,7 +153,6 @@ def process_with_gemini(search_data, brand, query, currency_hint):
     if not context_text:
         return None, "Google arama sonucunda anlamlı veri bulunamadı."
 
-    # GEMINI PRO İÇİN PROMPT
     prompt = f"""
     You are a data extractor.
     Context:
@@ -169,20 +164,18 @@ def process_with_gemini(search_data, brand, query, currency_hint):
     Instructions:
     1. Extract Product Name, Price, URL.
     2. Try to capture the Price from snippet if not explicitly stated.
-    3. Return ONLY valid JSON.
+    3. Return ONLY JSON.
     
     JSON Format:
     {{ "products": [ {{ "name": "...", "price": "...", "url": "..." }} ] }}
     """
     
     try:
-        # GÜVENLİ MODEL: GEMINI PRO (En stabil versiyon)
-        model = genai.GenerativeModel("gemini-pro")
-        response = model.generate_content(prompt)
-        
-        # Temizlik (Pro bazen markdown atar)
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(clean_text), None
+        # GÜVENLİ VE HIZLI MODEL: GEMINI 1.5 FLASH
+        # Bu modelin ücretsiz kotası çok yüksektir (Günde 1500 istek).
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+        return json.loads(response.text), None
     except Exception as e:
         return None, f"AI Analiz Hatası: {e}"
 
@@ -195,14 +188,14 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
     if not query_turkish:
         st.warning("Lütfen ürün adı giriniz.")
     else:
-        with st.status("Google üzerinden veri çekiliyor...", expanded=True) as status:
+        with st.status("Veri çekiliyor (Bedava Mod)...", expanded=True) as status:
             st.write(f"🔍 Arama: **{query_turkish}**")
             
             # 1. SERPER
             serper_result = search_with_serper(selected_brand, selected_country, query_turkish)
             
             if serper_result and "organic" in serper_result:
-                # 2. GEMINI PRO
+                # 2. GEMINI FLASH
                 target_currency = COUNTRIES[selected_country]["curr"]
                 result, error_msg = process_with_gemini(serper_result, selected_brand, query_turkish, target_currency)
                 
@@ -225,4 +218,55 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
             prices_local = []
 
             for item in products:
-                lo
+                local_price_str = str(item.get("price", "0"))
+                local_name = item.get("name", "-")
+                link = item.get("url", "#")
+                
+                val_local, val_tl, val_usd = calculate_prices(local_price_str, target_currency)
+                
+                if val_tl > 0:
+                    prices_tl.append(val_tl)
+                    prices_usd.append(val_usd)
+                    prices_local.append(val_local)
+
+                table_data.append({
+                    "Ürün Adı": local_name,
+                    "Yerel Fiyat": local_price_str,
+                    "TL Fiyatı": f"{val_tl:,.2f} ₺",
+                    "USD Fiyatı": f"${val_usd:,.2f}",
+                    "Link": link
+                })
+                
+                excel_lines.append(f"{local_name}\t{local_name}\t{local_price_str}\t{val_tl:,.2f}\t{val_usd:,.2f}\t{link}")
+
+            # İSTATİSTİKLER
+            def get_stats(l): return (sum(l)/len(l), min(l), max(l)) if l else (0,0,0)
+
+            avg_tl, min_tl, max_tl = get_stats(prices_tl)
+            avg_usd, min_usd, max_usd = get_stats(prices_usd)
+            avg_loc, min_loc, max_loc = get_stats(prices_local)
+            
+            st.markdown("---")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Ürün Sayısı", f"{len(products)}")
+            col2.metric("Ortalama (TL)", f"{avg_tl:,.0f} ₺")
+            col3.metric("En Düşük (TL)", f"{min_tl:,.0f} ₺")
+            col4.metric("En Yüksek (TL)", f"{max_tl:,.0f} ₺")
+            st.markdown("---")
+
+            # TABLO
+            st.markdown("""<h3 style='color: #1c54b2; margin-top: 0;'>🛍️ Detaylı Ürün Analizi</h3>""", unsafe_allow_html=True)
+            st.data_editor(
+                pd.DataFrame(table_data),
+                column_config={"Link": st.column_config.LinkColumn("İncele", display_text="🔗 Ürüne Git")},
+                hide_index=True,
+                use_container_width=True
+            )
+
+            # EXCEL
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.code("\n".join(excel_lines), language="text")
+            
+        else:
+            if not error_msg:
+                st.error("Sonuç bulunamadı.")
