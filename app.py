@@ -21,8 +21,7 @@ if not API_KEY:
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 FINAL_MODEL = "sonar"
 
-# --- DOMAIN İPUÇLARI (Sinsay ve Pepco Sorunu İçin Çözüm) ---
-# Yapay zekaya doğru siteyi fısıldıyoruz.
+# DOMAIN HARİTASI
 DOMAIN_MAP = {
     "Sinsay": {
         "Bulgaristan": "sinsay.com/bg", "Romanya": "sinsay.com/ro",
@@ -34,7 +33,8 @@ DOMAIN_MAP = {
         "Polonya": "pepco.pl", "Bosna Hersek": "pepco.ba",
         "Sırbistan": "pepco.rs"
     },
-    "Zara": {"Bulgaristan": "zara.com/bg", "Türkiye": "zara.com/tr"},
+    "Zara": {"Bulgaristan": "zara.com/bg", "Türkiye": "zara.com/tr", "Romanya": "zara.com/ro"},
+    "English Home": {"Bulgaristan": "englishhome.bg", "Romanya": "englishhome.ro", "Yunanistan": "englishhome.gr"},
     "H&M": {"Bulgaristan": "hm.com/bg", "Türkiye": "hm.com/tr"}
 }
 
@@ -109,33 +109,32 @@ def extract_price_number(price_str):
 
 def calculate_prices(raw_price_str, currency_code):
     amount = extract_price_number(raw_price_str)
-    if amount == 0 or not LIVE_RATES: return 0, 0
+    if amount == 0 or not LIVE_RATES: return 0, 0, 0
+    
     rate_to_tl = LIVE_RATES.get(currency_code, 0)
     price_tl = amount * rate_to_tl
     price_usd = price_tl / LIVE_RATES.get("USD", 1)
-    return round(price_tl, 2), round(price_usd, 2)
+    
+    return amount, round(price_tl, 2), round(price_usd, 2)
 
-def translate_text(text, target="tr"):
+def translate_query_text(text, target_lang):
     try:
-        if target == "tr": return text
-        # Google Translate ile kesin çeviri
-        return GoogleTranslator(source='auto', target=target).translate(text)
+        if target_lang == "tr": return text
+        return GoogleTranslator(source='auto', target=target_lang).translate(text)
+    except:
+        return text
+
+def translate_result_to_tr(text):
+    try:
+        return GoogleTranslator(source='auto', target='tr').translate(text)
     except:
         return text
 
 def search_with_perplexity(brand, country, translated_query, currency_hint):
-    # Domain haritasından doğru siteyi bulmaya çalışalım
     specific_domain = DOMAIN_MAP.get(brand, {}).get(country, "")
-    
-    domain_instruction = ""
-    if specific_domain:
-        domain_instruction = f"SEARCH ONLY ON THIS DOMAIN: {specific_domain}"
-    else:
-        domain_instruction = f"Search on the official {brand} website for {country}."
+    domain_instruction = f"SEARCH ONLY ON THIS DOMAIN: {specific_domain}" if specific_domain else f"Search on the official {brand} website for {country}."
 
     system_prompt = "You are a price scraping bot. Return ONLY JSON. No text."
-    
-    # Prompt'u Sinsay ve Pepco bulacak şekilde güçlendirdik
     user_prompt = f"""
     {domain_instruction}
     Search query: '{translated_query}'.
@@ -144,7 +143,7 @@ def search_with_perplexity(brand, country, translated_query, currency_hint):
     IMPORTANT: Provide the specific product name in JSON.
     
     Extract 5-10 products. Return JSON with 'products':
-    - 'name': Local product name (as seen on site)
+    - 'name': Local product name
     - 'price': Price string with currency
     - 'url': Direct product link
     """
@@ -178,7 +177,7 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
             lang_map = {"Türkiye":"tr", "Bulgaristan":"bg", "Yunanistan":"el", "Bosna Hersek":"bs", "Sırbistan":"sr", "İngiltere":"en", "Almanya":"de", "Romanya":"ro", "Rusya":"ru"}
             target_lang = lang_map.get(selected_country, "en")
             
-            translated_query = translate_text(query_turkish, target_lang) if target_lang != "tr" else query_turkish
+            translated_query = translate_query_text(query_turkish, target_lang)
             st.write(f"🧩 Çeviri: **{translated_query}** (Aranan Kelime)")
             
             result = search_with_perplexity(selected_brand, selected_country, translated_query, COUNTRIES[selected_country])
@@ -189,75 +188,100 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
             currency_code = COUNTRIES[selected_country]
             
             table_data = []
-            # TSV Başlığı (Excel için)
             excel_lines = ["Ürün Adı (TR)\tOrijinal İsim\tYerel Fiyat\tTL Fiyatı\tUSD Fiyatı\tLink"]
             
+            # İstatistikler için listeler
             prices_tl = []
+            prices_usd = []
+            prices_local = []
 
-            # Progress bar ile çeviri işlemini göster
             progress_bar = st.progress(0)
             total_items = len(products)
 
             for i, item in enumerate(products):
-                local_price = str(item.get("price", "0"))
+                local_price_str = str(item.get("price", "0"))
                 local_name = item.get("name", "-")
                 link = item.get("url", "#")
                 
-                # Hesaplamalar
-                price_tl, price_usd = calculate_prices(local_price, currency_code)
+                # Fiyat Hesapla (Yerel, TL, USD)
+                val_local, val_tl, val_usd = calculate_prices(local_price_str, currency_code)
                 
-                # TÜRKÇE ÇEVİRİSİ (ZORUNLU)
-                # Google Translate'i her ürün adı için çalıştırıyoruz
-                name_tr = translate_text(local_name, "tr")
+                name_tr = translate_result_to_tr(local_name)
                 
-                if price_tl > 0: prices_tl.append(price_tl)
+                if val_tl > 0:
+                    prices_tl.append(val_tl)
+                    prices_usd.append(val_usd)
+                    prices_local.append(val_local)
 
-                # Görsel Tablo Verisi
                 table_data.append({
-                    "Ürün Adı (TR)": name_tr, # Türkçe en başta
+                    "Ürün Adı (TR)": name_tr,
                     "Orijinal İsim": local_name,
-                    "Yerel Fiyat": local_price,
-                    "TL Fiyatı": f"{price_tl:,.2f} ₺",
-                    "USD Fiyatı": f"${price_usd:,.2f}",
+                    "Yerel Fiyat": local_price_str,
+                    "TL Fiyatı": f"{val_tl:,.2f} ₺",
+                    "USD Fiyatı": f"${val_usd:,.2f}",
                     "Link": link
                 })
                 
-                # Excel Verisi
-                excel_lines.append(f"{name_tr}\t{local_name}\t{local_price}\t{price_tl:,.2f}\t{price_usd:,.2f}\t{link}")
+                excel_lines.append(f"{name_tr}\t{local_name}\t{local_price_str}\t{val_tl:,.2f}\t{val_usd:,.2f}\t{link}")
                 progress_bar.progress((i + 1) / total_items)
 
             progress_bar.empty()
 
-            # --- METRİKLER ---
-            avg_price = sum(prices_tl) / len(prices_tl) if prices_tl else 0
-            min_price = min(prices_tl) if prices_tl else 0
-            max_price = max(prices_tl) if prices_tl else 0
-
-            st.markdown("---")
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Bulunan Ürün", f"{len(products)}")
-            col2.metric("Ortalama", f"{avg_price:,.0f} ₺")
-            col3.metric("En Düşük", f"{min_price:,.0f} ₺")
-            col4.metric("En Yüksek", f"{max_price:,.0f} ₺")
-            st.markdown("---")
-
-            # --- EXCEL KOPYALAMA ---
-            st.subheader("📋 Excel'e Kopyala (TSV)")
-            st.code("\n".join(excel_lines), language="text")
-
-            # --- GÖRSEL TABLO (GÜZEL LİNKLER) ---
-            st.subheader("🖼️ Ürün Detayları")
-            df = pd.DataFrame(table_data)
+            # --- 3 KATMANLI İSTATİSTİK PANI ---
             
+            # Fonksiyon: Liste alır, metrik döner
+            def get_stats(price_list):
+                if not price_list: return 0, 0, 0
+                return sum(price_list)/len(price_list), min(price_list), max(price_list)
+
+            avg_tl, min_tl, max_tl = get_stats(prices_tl)
+            avg_usd, min_usd, max_usd = get_stats(prices_usd)
+            avg_loc, min_loc, max_loc = get_stats(prices_local)
+            
+            product_count = len(products)
+
+            st.markdown("---")
+            
+            # 1. SATIR: TL BAZLI
+            st.markdown("##### 🇹🇷 Türk Lirası Analizi")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Bulunan Ürün", f"{product_count}")
+            col2.metric("Ortalama (TL)", f"{avg_tl:,.0f} ₺")
+            col3.metric("En Düşük (TL)", f"{min_tl:,.0f} ₺")
+            col4.metric("En Yüksek (TL)", f"{max_tl:,.0f} ₺")
+            
+            # 2. SATIR: USD BAZLI
+            st.markdown("##### 🇺🇸 USD Analizi")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Bulunan Ürün", f"{product_count}")
+            c2.metric("Ortalama (USD)", f"${avg_usd:,.2f}")
+            c3.metric("En Düşük (USD)", f"${min_usd:,.2f}")
+            c4.metric("En Yüksek (USD)", f"${max_usd:,.2f}")
+
+            # 3. SATIR: YEREL PARA BAZLI
+            st.markdown(f"##### 🏳️ Yerel Para Analizi ({currency_code})")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Bulunan Ürün", f"{product_count}")
+            k2.metric(f"Ortalama ({currency_code})", f"{avg_loc:,.2f}")
+            k3.metric(f"En Düşük ({currency_code})", f"{min_loc:,.2f}")
+            k4.metric(f"En Yüksek ({currency_code})", f"{max_loc:,.2f}")
+
+            st.markdown("---")
+
+            # --- GÖRSEL TABLO ---
+            st.markdown("""
+                <h3 style='color: #1c54b2; margin-top: 0;'>🛍️ Detaylı Ürün Analizi</h3>
+            """, unsafe_allow_html=True)
+            
+            df = pd.DataFrame(table_data)
             st.data_editor(
                 df,
                 column_config={
                     "Link": st.column_config.LinkColumn(
-                        "İncele",            # Sütun Başlığı
-                        help="Ürün sayfasına git",
+                        "İncele",
                         validate="^https://.*",
                         max_chars=100,
-                        display_text="🔗 Ürüne Git" # Link yerine bu yazacak
+                        display_text="🔗 Ürüne Git"
                     ),
                     "Ürün Adı (TR)": st.column_config.TextColumn(
                         "Ürün Adı (TR)",
@@ -267,6 +291,16 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
                 hide_index=True,
                 use_container_width=True
             )
+
+            # --- EXCEL KOPYALAMA ---
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("""
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <h3 style='color: #1D6F42; margin: 0;'>📊 Excel Formatı (TSV)</h3>
+                    <span style='color: #666; font-size: 14px;'>Tabloyu Kopyalamak İçin Buraya Tıkla ⤵</span>
+                </div>
+            """, unsafe_allow_html=True)
+            st.code("\n".join(excel_lines), language="text")
             
         else:
             st.error(f"Sonuç bulunamadı. '{selected_brand}' sitesi {selected_country} için erişilebilir olmayabilir veya bot koruması çok yüksek olabilir.")
