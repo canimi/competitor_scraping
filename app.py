@@ -4,6 +4,7 @@ import os
 import json
 import requests
 import re
+from deep_translator import GoogleTranslator
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="LCW Home Global", layout="wide", page_icon="🏠")
@@ -22,7 +23,7 @@ st.sidebar.markdown(
 # --- API KEY KONTROLÜ ---
 GOOGLE_KEY = os.environ.get("GOOGLE_API_KEY")
 if not GOOGLE_KEY:
-    GOOGLE_KEY = st.sidebar.text_input("1. Google API Key (Flash Modeli):", type="password")
+    GOOGLE_KEY = st.sidebar.text_input("1. Google API Key (Flash):", type="password")
 
 SERPER_KEY = os.environ.get("SERPER_API_KEY")
 if not SERPER_KEY:
@@ -34,20 +35,16 @@ if not GOOGLE_KEY or not SERPER_KEY:
 
 # --- SABİTLER ---
 COUNTRIES = {
-    "Türkiye": {"curr": "TRY", "gl": "tr", "hl": "tr"},
-    "Almanya": {"curr": "EUR", "gl": "de", "hl": "de"},
-    "Bosna Hersek": {"curr": "BAM", "gl": "ba", "hl": "bs"},
-    "Sırbistan": {"curr": "RSD", "gl": "rs", "hl": "sr"},
-    "Bulgaristan": {"curr": "BGN", "gl": "bg", "hl": "bg"},
-    "Yunanistan": {"curr": "EUR", "gl": "gr", "hl": "el"},
-    "İngiltere": {"curr": "GBP", "gl": "uk", "hl": "en"},
-    "Polonya": {"curr": "PLN", "gl": "pl", "hl": "pl"},
-    "Romanya": {"curr": "RON", "gl": "ro", "hl": "ro"},
-    "Arnavutluk": {"curr": "ALL", "gl": "al", "hl": "sq"},
-    "Karadağ": {"curr": "EUR", "gl": "me", "hl": "sr"},
-    "Moldova": {"curr": "MDL", "gl": "md", "hl": "ro"},
-    "Rusya": {"curr": "RUB", "gl": "ru", "hl": "ru"},
-    "Ukrayna": {"curr": "UAH", "gl": "ua", "hl": "uk"}
+    "Türkiye": {"curr": "TRY", "gl": "tr", "hl": "tr", "lang": "tr"},
+    "Almanya": {"curr": "EUR", "gl": "de", "hl": "de", "lang": "de"},
+    "Bosna Hersek": {"curr": "BAM", "gl": "ba", "hl": "bs", "lang": "bs"},
+    "Sırbistan": {"curr": "RSD", "gl": "rs", "hl": "sr", "lang": "sr"},
+    "Bulgaristan": {"curr": "BGN", "gl": "bg", "hl": "bg", "lang": "bg"},
+    "Yunanistan": {"curr": "EUR", "gl": "gr", "hl": "el", "lang": "el"},
+    "İngiltere": {"curr": "GBP", "gl": "uk", "hl": "en", "lang": "en"},
+    "Polonya": {"curr": "PLN", "gl": "pl", "hl": "pl", "lang": "pl"},
+    "Romanya": {"curr": "RON", "gl": "ro", "hl": "ro", "lang": "ro"},
+    "Rusya": {"curr": "RUB", "gl": "ru", "hl": "ru", "lang": "ru"},
 }
 
 BRANDS = ["LC Waikiki", "Sinsay", "Pepco", "Zara", "H&M", "Mango", "Primark", "English Home", "IKEA", "Jysk"]
@@ -60,13 +57,10 @@ def call_gemini_flash(prompt):
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"response_mime_type": "application/json"}
     }
-    
     try:
         response = requests.post(url, headers=headers, json=data)
-        if response.status_code != 200:
-            return None
-        result = response.json()
-        return json.loads(result['candidates'][0]['content']['parts'][0]['text'])
+        if response.status_code != 200: return None
+        return json.loads(response.json()['candidates'][0]['content']['parts'][0]['text'])
     except:
         return None
 
@@ -81,47 +75,37 @@ def search_serper(query, gl, hl):
     except:
         return None
 
+# --- YARDIMCI: ÇEVİRİ (DEEP TRANSLATOR) ---
+def translate_text(text, target_lang):
+    try:
+        if target_lang == "tr": return text
+        return GoogleTranslator(source='auto', target=target_lang).translate(text)
+    except:
+        return text
+
 # --- CANLI KUR ---
 @st.cache_data(ttl=3600)
 def fetch_live_rates():
     try:
-        response = requests.get("https://api.exchangerate-api.com/v4/latest/TRY")
-        data = response.json()
-        rates = data["rates"]
-        live_rates = {}
-        for c, r in rates.items():
-            if r > 0: live_rates[c] = 1 / r
-        if "EUR" in live_rates: live_rates["BAM"] = live_rates["EUR"] / 1.95583 
-        return live_rates, data["date"]
+        r = requests.get("https://api.exchangerate-api.com/v4/latest/TRY").json()['rates']
+        live = {k: 1/v for k, v in r.items() if v > 0}
+        if "EUR" in live: live["BAM"] = live["EUR"] / 1.95583 
+        return live
     except:
-        return None, None
+        return None
 
-LIVE_RATES, RATE_DATE = fetch_live_rates()
-
-st.sidebar.header("🔎 Filtreler")
-selected_country = st.sidebar.selectbox("Ülke", list(COUNTRIES.keys()))
-selected_brand = st.sidebar.selectbox("Marka", BRANDS)
-query_turkish = st.sidebar.text_input("Ürün Adı (TR)", "Çift Kişilik Battaniye")
-
-with st.sidebar.expander("💸 Canlı Kur Bilgisi", expanded=True):
-    if LIVE_RATES:
-        st.write(f"🇺🇸 USD: **{LIVE_RATES.get('USD',0):.2f} ₺**")
-        st.write(f"🇪🇺 EUR: **{LIVE_RATES.get('EUR',0):.2f} ₺**")
-        target_curr = COUNTRIES[selected_country]["curr"]
-        if target_curr not in ["USD", "EUR", "TRY"]:
-             st.write(f"🏳️ {target_curr}: **{LIVE_RATES.get(target_curr,0):.2f} ₺**")
-        st.caption(f"Tarih: {RATE_DATE}")
+LIVE_RATES = fetch_live_rates()
 
 # --- FİYAT HESAPLAMA ---
-def extract_price(price_str):
-    if not price_str: return 0.0
-    clean = re.sub(r'[^\d.,]', '', str(price_str))
+def extract_price(p_str):
+    if not p_str: return 0.0
+    clean = re.sub(r'[^\d.,]', '', str(p_str))
     if "," in clean and "." in clean:
         if clean.find(",") < clean.find("."): clean = clean.replace(",", "")
         else: clean = clean.replace(".", "").replace(",", ".")
     elif "," in clean: clean = clean.replace(",", ".")
-    nums = re.findall(r"[-+]?\d*\.\d+|\d+", clean)
-    return float(nums[0]) if nums else 0.0
+    res = re.findall(r"[-+]?\d*\.\d+|\d+", clean)
+    return float(res[0]) if res else 0.0
 
 def calc_prices(raw, code):
     amt = extract_price(raw)
@@ -129,104 +113,90 @@ def calc_prices(raw, code):
     return amt, round(amt * LIVE_RATES.get(code, 0), 2), round((amt * LIVE_RATES.get(code, 0)) / LIVE_RATES.get("USD", 1), 2)
 
 # --- ANA EKRAN ---
-st.markdown(f"""<h2 style='color: #333;'>🌍 {selected_brand} <span style='color: #999; font-weight: normal;'>|</span> {selected_country}</h2>""", unsafe_allow_html=True)
+st.sidebar.header("🔎 Filtreler")
+selected_country = st.sidebar.selectbox("Ülke", list(COUNTRIES.keys()))
+selected_brand = st.sidebar.selectbox("Marka", BRANDS)
+query_turkish = st.sidebar.text_input("Ürün Adı (TR)", "Çift Kişilik Battaniye")
+
+st.markdown(f"## 🌍 {selected_brand} | {selected_country}")
 
 if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
     if not query_turkish:
-        st.warning("Lütfen ürün adı giriniz.")
+        st.warning("Ürün adı giriniz.")
     else:
-        with st.status("İşlemler yapılıyor...", expanded=True) as status:
-            country_conf = COUNTRIES[selected_country]
+        with st.status("Veriler toplanıyor...", expanded=True) as status:
+            conf = COUNTRIES[selected_country]
             
             # 1. ÇEVİRİ
-            trans_prompt = f"""Translate this Turkish text to the language used in {selected_country}. Return JSON: {{ "translated": "..." }} Text: "{query_turkish}" """
-            trans_res = call_gemini_flash(trans_prompt)
-            translated_query = trans_res.get("translated", query_turkish) if trans_res else query_turkish
+            translated_query = translate_text(query_turkish, conf["lang"])
+            st.write(f"🧩 Çeviri: **{translated_query}** ({conf['lang']})")
             
-            st.write(f"🧩 Çeviri: **{translated_query}**")
-            
-            # 2. ARAMA (SERPER)
+            # 2. ARAMA
             search_q = f"{selected_brand} {selected_country} {translated_query} price"
-            serper_data = search_serper(search_q, country_conf["gl"], country_conf["hl"])
+            serper_res = search_serper(search_q, conf["gl"], conf["hl"])
             
-            if serper_data and "organic" in serper_data:
-                # 3. VERİ AYIKLAMA (AI FLASH)
+            ai_result = None
+            if serper_res and "organic" in serper_res:
+                # 3. AYIKLAMA
                 context = ""
-                # HATA BURADAYDI, DÜZELTİLDİ:
-                for i in serper_data["organic"][:10]:
-                    title = i.get('title', 'No Title')
-                    link = i.get('link', '#')
-                    snippet = i.get('snippet', '')
-                    price = i.get('price', '')
-                    context += f"Title: {title}\nLink: {link}\nDesc: {snippet}\nPrice: {price}\n---\n"
+                for i in serper_res["organic"]:
+                    context += f"T: {i.get('title')}\nL: {i.get('link')}\nD: {i.get('snippet')}\nP: {i.get('price','')}\n---\n"
                 
-                extract_prompt = f"""
+                prompt = f"""
                 Extract products for "{selected_brand}" matching "{translated_query}".
                 Context: {context}
-                Currency Hint: {country_conf['curr']}
+                Currency Hint: {conf['curr']}
                 JSON Format: {{ "products": [ {{ "name": "...", "price": "...", "url": "..." }} ] }}
                 """
-                ai_result = call_gemini_flash(extract_prompt)
-                
-                status.update(label="Tamamlandı", state="complete")
+                ai_result = call_gemini_flash(prompt)
+                status.update(label="Bitti", state="complete")
             else:
-                ai_result = None
-                st.error("Arama sonucu bulunamadı.")
+                st.error("Serper sonuç bulamadı.")
 
-        if ai_result and "products" in ai_result:
+        if ai_result and "products" in ai_result and ai_result["products"]:
             products = ai_result["products"]
-            table_data = []
-            excel_lines = ["Ürün Adı (TR)\tOrijinal İsim\tYerel Fiyat\tTL Fiyatı\tUSD Fiyatı\tLink"]
+            rows = []
+            excel_rows = ["Ürün Adı (TR)\tOrijinal İsim\tFiyat\tTL\tUSD\tLink"]
             
             p_tl, p_usd, p_loc = [], [], []
 
-            for item in products:
-                loc_p = str(item.get("price", "0"))
-                name = item.get("name", "-")
-                url = item.get("url", "#")
+            for p in products:
+                raw_p, name, url = str(p.get("price", "0")), p.get("name", "-"), p.get("url", "#")
+                v_loc, v_tl, v_usd = calc_prices(raw_p, conf["curr"])
                 
-                val_loc, val_tl, val_usd = calc_prices(loc_p, country_conf["curr"])
-                
-                if val_tl > 0:
-                    p_tl.append(val_tl); p_usd.append(val_usd); p_loc.append(val_loc)
+                # İsimleri geri Türkçe yapalım
+                name_tr = translate_text(name, "tr")
 
-                table_data.append({
-                    "Ürün Adı": name,
-                    "Yerel Fiyat": loc_p,
-                    "TL Fiyatı": f"{val_tl:,.2f} ₺",
-                    "USD Fiyatı": f"${val_usd:,.2f}",
-                    "Link": url
-                })
-                excel_lines.append(f"{name}\t{name}\t{loc_p}\t{val_tl:,.2f}\t{val_usd:,.2f}\t{url}")
+                if v_tl > 0:
+                    p_tl.append(v_tl); p_usd.append(v_usd); p_loc.append(v_loc)
+
+                rows.append({"Ürün (TR)": name_tr, "Orijinal": name, "Fiyat": raw_p, "TL": f"{v_tl:.0f} ₺", "USD": f"${v_usd:.2f}", "Link": url})
+                excel_rows.append(f"{name_tr}\t{name}\t{raw_p}\t{v_tl}\t{v_usd}\t{url}")
 
             # İSTATİSTİKLER
-            def stats(l): return (sum(l)/len(l), min(l), max(l)) if l else (0,0,0)
-            avg_t, min_t, max_t = stats(p_tl)
-            avg_u, min_u, max_u = stats(p_usd)
-            avg_l, min_l, max_l = stats(p_loc)
+            if p_tl:
+                avg = sum(p_tl)/len(p_tl)
+                st.markdown("---")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Ürün", len(products))
+                c2.metric("Ortalama", f"{avg:.0f} ₺")
+                c3.metric("En Düşük", f"{min(p_tl):.0f} ₺")
 
-            st.markdown("---")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Ürün", f"{len(products)}")
-            c2.metric("Ortalama (TL)", f"{avg_t:,.0f} ₺")
-            c3.metric("En Düşük (TL)", f"{min_t:,.0f} ₺")
-            c4.metric("En Yüksek (TL)", f"{max_t:,.0f} ₺")
-            
-            st.markdown("---")
-            st.markdown(f"**Detaylı Analiz ({country_conf['curr']} / USD)**")
-            k1, k2 = st.columns(2)
-            k1.info(f"Ort: {avg_l:.2f} {country_conf['curr']} | Min: {min_l:.2f} | Max: {max_l:.2f}")
-            k2.success(f"Ort: ${avg_u:.2f} | Min: ${min_u:.2f} | Max: ${max_u:.2f}")
-
-            st.markdown("""<h3 style='color: #1c54b2;'>🛍️ Sonuçlar</h3>""", unsafe_allow_html=True)
+            # TABLO
+            st.markdown("### 🛍️ Sonuçlar")
             st.data_editor(
-                pd.DataFrame(table_data),
+                pd.DataFrame(rows),
                 column_config={"Link": st.column_config.LinkColumn("Git", display_text="🔗")},
                 hide_index=True,
                 use_container_width=True
             )
-
+            
             st.markdown("<br>", unsafe_allow_html=True)
-            st.code("\n".join(excel_lines), language="text")
+            st.code("\n".join(excel_rows), language="text")
+            
         else:
-            st.warning("Ürün bulunamadı.")
+            st.error("Ürün bulunamadı.")
+            # HATA AYIKLAMA (DEBUG)
+            with st.expander("Geliştirici Detayı (Neden bulunamadı?)"):
+                st.write("Aranan:", translated_query)
+                st.write("Serper Ham Veri:", serper_res)
