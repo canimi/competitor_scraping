@@ -17,7 +17,7 @@ st.markdown("""
 </style>
 <div class="main-header">
     <h1 style='font-size:24px; margin:0;'>LCW HOME | GLOBAL INTELLIGENCE</h1>
-    <p style='font-size:12px; margin:0; opacity:0.8;'>Powered by DeepSeek V3 & Serper</p>
+    <p style='font-size:12px; margin:0; opacity:0.8;'>Powered by DeepSeek V3 & Serper (Esnek Mod)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -25,7 +25,6 @@ st.markdown("""
 with st.sidebar:
     st.header("🔑 API Anahtarları")
     
-    # BURAYI DEĞİŞTİRDİK: ARTIK DEEPSEEK KEY İSTİYORUZ
     DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY")
     if not DEEPSEEK_KEY:
         DEEPSEEK_KEY = st.text_input("DeepSeek API Key:", type="password", help="platform.deepseek.com adresinden alınır")
@@ -91,7 +90,7 @@ def search_serper(query, gl, hl):
         "q": query,
         "gl": gl,
         "hl": hl,
-        "num": 15
+        "num": 20 # Daha fazla sonuç gelsin diye 20'ye çıkardım
     })
     headers = {'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json'}
     
@@ -117,17 +116,20 @@ def analyze_with_deepseek(search_data, brand, product_name, currency_code):
     if not context_text:
         return None
 
-    # DeepSeek için Prompt
-    system_msg = "You are a helpful data extraction assistant. You only output valid JSON."
+    # --- YENİ ESNEK PROMPT ---
+    # Burada AI'a diyoruz ki: Tam eşleşme yoksa bile benzer ev ürünlerini getir.
+    
+    system_msg = "You are a helpful data extraction assistant. You output valid JSON."
     user_msg = f"""
     I have search results for "{brand}" looking for "{product_name}".
     
     TASKS:
-    1. Filter for products strictly matching "{product_name}". Ignore irrelevant items (like socks when looking for towels).
-    2. Extract the price as a FLOAT number (use dot '.' for decimals). 
+    1. Search for products matching "{product_name}".
+    2. IMPORTANT: If an exact match is not found, ALSO accept similar 'Home Textile' products (e.g., if looking for Duvet, accept Curtains, Blankets, Pillowcases) but try to avoid completely irrelevant items like Clothing/Underwear.
+    3. EXTRACT the price as a FLOAT number (use dot '.' for decimals). 
        - Remove currency symbols. 
-       - If price is "10,99 €", output 10.99
-       - If price is "1.200 RSD", output 1200.0
+       - Example: "10,99 €" -> 10.99
+       - Example: "40.00 лв" -> 40.00
     
     SEARCH DATA:
     {context_text}
@@ -136,8 +138,8 @@ def analyze_with_deepseek(search_data, brand, product_name, currency_code):
     {{
       "products": [
         {{
-          "name": "Product Name",
-          "price": 10.99, 
+          "name": "Product Name from Title",
+          "price": 40.00, 
           "currency": "{currency_code}",
           "url": "Product Link"
         }}
@@ -212,7 +214,7 @@ if start_btn:
     
     if search_results:
         # 4. AI Analizi (DeepSeek)
-        with st.spinner("🧠 DeepSeek V3 verileri analiz ediyor..."):
+        with st.spinner("🧠 DeepSeek V3 verileri analiz ediyor (Esnek Mod)..."):
             ai_data = analyze_with_deepseek(search_results, sel_brand, q_tr, target_currency)
         
         if ai_data and "products" in ai_data and len(ai_data["products"]) > 0:
@@ -254,7 +256,7 @@ if start_btn:
             else:
                 st.warning("Ürün bulundu ancak fiyatlar 0 veya geçersiz geldi.")
         else:
-            st.warning("AI uygun ürün bulamadı veya sonuç döndürmedi.")
+            st.warning("Google'da sonuçlar var ancak AI tam eşleşme bulamadı.")
             with st.expander("Ham Arama Sonuçlarını Gör"):
                 st.json(search_results)
     else:
