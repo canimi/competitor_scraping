@@ -7,7 +7,7 @@ import re
 from deep_translator import GoogleTranslator
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="LCW Home Global Intelligence", layout="wide", page_icon="🌍")
+st.set_page_config(page_title="LCW Home Global (DeepSeek)", layout="wide", page_icon="🚀")
 
 # --- CSS VE ARAYÜZ ---
 st.markdown("""
@@ -17,25 +17,27 @@ st.markdown("""
 </style>
 <div class="main-header">
     <h1 style='font-size:24px; margin:0;'>LCW HOME | GLOBAL INTELLIGENCE</h1>
-    <p style='font-size:12px; margin:0; opacity:0.8;'>Rakip Fiyat Analiz ve Takip Sistemi (Flash Model)</p>
+    <p style='font-size:12px; margin:0; opacity:0.8;'>Powered by DeepSeek V3 & Serper</p>
 </div>
 """, unsafe_allow_html=True)
 
 # --- API KEY KONTROLÜ ---
 with st.sidebar:
     st.header("🔑 API Anahtarları")
-    GOOGLE_KEY = os.environ.get("GOOGLE_API_KEY")
-    if not GOOGLE_KEY:
-        GOOGLE_KEY = st.text_input("Google Gemini API Key", type="password")
+    
+    # BURAYI DEĞİŞTİRDİK: ARTIK DEEPSEEK KEY İSTİYORUZ
+    DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY")
+    if not DEEPSEEK_KEY:
+        DEEPSEEK_KEY = st.text_input("DeepSeek API Key:", type="password", help="platform.deepseek.com adresinden alınır")
     
     SERPER_KEY = os.environ.get("SERPER_API_KEY")
     if not SERPER_KEY:
-        SERPER_KEY = st.text_input("Serper API Key", type="password")
+        SERPER_KEY = st.text_input("Serper API Key:", type="password")
     
     st.divider()
 
-if not GOOGLE_KEY or not SERPER_KEY:
-    st.warning("⚠️ Lütfen sol menüden API anahtarlarını giriniz.")
+if not DEEPSEEK_KEY or not SERPER_KEY:
+    st.warning("⚠️ Lütfen DeepSeek ve Serper API anahtarlarını giriniz.")
     st.stop()
 
 # --- SABİTLER VE KONFİGÜRASYON ---
@@ -100,8 +102,8 @@ def search_serper(query, gl, hl):
         st.error(f"Arama hatası: {e}")
         return None
 
-def analyze_with_gemini(search_data, brand, product_name, currency_code):
-    """Gemini'ye sonuçları yorumlatır ve temiz JSON çıktısı ister"""
+def analyze_with_deepseek(search_data, brand, product_name, currency_code):
+    """DeepSeek API (OpenAI Uyumlu) kullanarak analiz yapar"""
     
     context_text = ""
     if "organic" in search_data:
@@ -115,21 +117,22 @@ def analyze_with_gemini(search_data, brand, product_name, currency_code):
     if not context_text:
         return None
 
-    prompt = f"""
-    You are a pricing analyst AI. I will give you search results for the brand "{brand}" looking for the product "{product_name}".
+    # DeepSeek için Prompt
+    system_msg = "You are a helpful data extraction assistant. You only output valid JSON."
+    user_msg = f"""
+    I have search results for "{brand}" looking for "{product_name}".
     
-    YOUR TASK:
-    1. Identify products that strictly match the category "{product_name}".
-    2. IGNORE irrelevant items (e.g., if looking for 'Towel', ignore 'Underwear', 'Socks', 'T-shirt').
-    3. EXTRACT the price. IMPORTANT: Convert the price to a purely numeric float format with a DOT (.) as the decimal separator. Do NOT include currency symbols in the 'price' field.
-       - Example: "10,99 €" -> 10.99
-       - Example: "1.200 RSD" -> 1200.0
-    4. Return a JSON object with a key "products".
+    TASKS:
+    1. Filter for products strictly matching "{product_name}". Ignore irrelevant items (like socks when looking for towels).
+    2. Extract the price as a FLOAT number (use dot '.' for decimals). 
+       - Remove currency symbols. 
+       - If price is "10,99 €", output 10.99
+       - If price is "1.200 RSD", output 1200.0
     
-    CONTEXT DATA:
+    SEARCH DATA:
     {context_text}
     
-    REQUIRED JSON OUTPUT FORMAT:
+    OUTPUT FORMAT (JSON ONLY):
     {{
       "products": [
         {{
@@ -142,25 +145,34 @@ def analyze_with_gemini(search_data, brand, product_name, currency_code):
     }}
     """
     
-    # --- DÜZELTİLEN KISIM: 'gemini-1.5-flash-001' (Sürüm numaralı Flash) ---
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key={GOOGLE_KEY}"
-    headers = {'Content-Type': 'application/json'}
+    # DeepSeek API Endpoint
+    url = "https://api.deepseek.com/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {DEEPSEEK_KEY}"
+    }
     data = {
-        "contents": [{"parts": [{"text": prompt}]}], 
-        "generationConfig": {"response_mime_type": "application/json"}
+        "model": "deepseek-chat",  # DeepSeek V3
+        "messages": [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg}
+        ],
+        "response_format": {
+            "type": "json_object"
+        },
+        "temperature": 0.1
     }
     
     try:
         res = requests.post(url, headers=headers, json=data)
         if res.status_code == 200:
-            content = res.json()['candidates'][0]['content']['parts'][0]['text']
-            clean_json = content.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean_json)
+            content = res.json()['choices'][0]['message']['content']
+            return json.loads(content)
         else:
-            st.error(f"AI Hatası (Flash): {res.status_code} | Mesaj: {res.text}")
+            st.error(f"DeepSeek Hatası: {res.status_code} | {res.text}")
             return None
     except Exception as e:
-        st.error(f"AI Parse Hatası: {e}")
+        st.error(f"AI Bağlantı Hatası: {e}")
         return None
 
 # --- ANA AKIŞ ---
@@ -172,7 +184,7 @@ with st.sidebar:
     sel_brand = st.selectbox("Rakip Marka", BRANDS)
     q_tr = st.text_input("Aranacak Ürün (Türkçe)", "Çift Kişilik Nevresim Takımı")
     
-    start_btn = st.button("Analizi Başlat 🚀", type="primary")
+    start_btn = st.button("Analizi Başlat (DeepSeek) 🚀", type="primary")
 
 # Ana Ekran
 if start_btn:
@@ -199,9 +211,9 @@ if start_btn:
     search_results = search_serper(search_query, country_conf["gl"], country_conf["hl"])
     
     if search_results:
-        # 4. AI Analizi ve Parsing
-        with st.spinner("🤖 Yapay zeka (Flash) fiyatları ayıklıyor..."):
-            ai_data = analyze_with_gemini(search_results, sel_brand, q_tr, target_currency)
+        # 4. AI Analizi (DeepSeek)
+        with st.spinner("🧠 DeepSeek V3 verileri analiz ediyor..."):
+            ai_data = analyze_with_deepseek(search_results, sel_brand, q_tr, target_currency)
         
         if ai_data and "products" in ai_data and len(ai_data["products"]) > 0:
             # 5. Tablo Oluşturma
@@ -242,7 +254,7 @@ if start_btn:
             else:
                 st.warning("Ürün bulundu ancak fiyatlar 0 veya geçersiz geldi.")
         else:
-            st.warning("AI uygun ürün bulamadı. Arama terimini değiştirmeyi deneyin.")
+            st.warning("AI uygun ürün bulamadı veya sonuç döndürmedi.")
             with st.expander("Ham Arama Sonuçlarını Gör"):
                 st.json(search_results)
     else:
