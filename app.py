@@ -9,8 +9,6 @@ from deep_translator import GoogleTranslator
 st.set_page_config(page_title="AI Fiyat Dedektifi", layout="wide", page_icon="🕵️")
 
 # --- ENV KONTROLÜ ---
-# Render'dan gelen API anahtarını alıyoruz.
-# Eğer anahtar yoksa uyarı verip çalışmayı durduruyoruz.
 API_KEY = os.environ.get("PERPLEXITY_API_KEY")
 
 if not API_KEY:
@@ -19,10 +17,14 @@ if not API_KEY:
     st.stop()
 
 st.title("🕵️ Perplexity Destekli Global Fiyat Dedektifi")
-st.markdown("Bot koruması yok, Mock data yok. Yapay zeka ile **gerçek zamanlı** fiyat analizi.")
+st.markdown("Yapay zeka ile **gerçek zamanlı** ve **global** fiyat analizi.")
 
 # --- SABİTLER ---
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
+
+# Model ismini daha kararlı olan 'Small' versiyon ile değiştirdik
+# Eğer Pro hesabın varsa 'large' yapabilirsin ama 'small' daha garanti çalışır.
+MODEL_NAME = "llama-3.1-sonar-small-128k-online"
 
 COUNTRIES = {
     "Türkiye": "TRY",
@@ -71,7 +73,7 @@ def translate_query(text, country_name):
         return text, text
 
 def search_with_perplexity(brand, country, translated_query, currency_hint):
-    """ENV'den alınan API Key ile Perplexity sorgusu yapar."""
+    """API Sorgusu - Gelişmiş Hata Yakalama ile"""
     
     system_prompt = (
         "You are a strict data extraction assistant. "
@@ -102,16 +104,20 @@ def search_with_perplexity(brand, country, translated_query, currency_hint):
     }
     
     payload = {
-        "model": "llama-3.1-sonar-large-128k-online", 
+        "model": MODEL_NAME, 
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        "temperature": 0.1
+        "temperature": 0.1,
+        "max_tokens": 1024, # Eksik parametre hatasını önlemek için eklendi
+        "return_citations": False
     }
 
     try:
         response = requests.post(PERPLEXITY_URL, json=payload, headers=headers)
+        
+        # Eğer hata varsa (400, 401 vs) Python hata fırlatacak
         response.raise_for_status()
         
         content = response.json()['choices'][0]['message']['content']
@@ -119,8 +125,20 @@ def search_with_perplexity(brand, country, translated_query, currency_hint):
         
         return json.loads(content)
         
+    except requests.exceptions.HTTPError as err:
+        # 400 Hatasının DETAYINI görelim
+        st.error(f"HTTP Hatası Oluştu: {err}")
+        try:
+            # Perplexity'nin gönderdiği hata mesajını ekrana basıyoruz
+            error_details = response.json()
+            st.warning("Perplexity Hata Detayı:")
+            st.json(error_details)
+        except:
+            st.text(response.text)
+        return None
+        
     except Exception as e:
-        st.error(f"Bağlantı Hatası: {e}")
+        st.error(f"Genel Hata: {e}")
         return None
 
 # --- ANA AKIŞ ---
