@@ -215,7 +215,8 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
             st.code("\n".join(excel_rows), language="text")
             
         else:
-            st.error("Ürün bulunamadı.")
-            # LOGU GÖSTERELİM Kİ HATA VARSA GÖRELİM
-            with st.expander("Geliştirici Logları"):
-                st.write(serper_res)
+            st.warning("Ürün bulunamadı.")
+            # DEBUG MODU (SADECE SORUN VARSA GÖRÜNÜR)
+            with st.expander("Geliştirici Verisi"):
+                st.write("Aranan:", translated_query)
+                st.json(serper_res)
