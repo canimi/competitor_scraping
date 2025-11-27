@@ -201,7 +201,7 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Ürün", len(products))
                 c2.metric("Ortalama", f"{avg:.0f} ₺")
-                c3.metric("En Düşük", f"{min(p_tl):.0f} ₺")
+                c3.metric("En Düşük", f"{min(p_tl):,.0f} ₺")
 
             st.markdown("### 🛍️ Sonuçlar")
             st.data_editor(
