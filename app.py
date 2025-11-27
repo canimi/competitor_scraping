@@ -3,261 +3,277 @@ import pandas as pd
 import os
 import json
 import requests
-import re
 from deep_translator import GoogleTranslator
 
-# --- SAYFA AYARLARI ---
-st.set_page_config(page_title="LCW Home Global (DeepSeek)", layout="wide", page_icon="🚀")
+# --- SAYFA AYARLARI (Geniş Ekran) ---
+st.set_page_config(page_title="LCW Fiyat Araştırması", layout="wide", page_icon="🛍️")
 
-# --- CSS VE ARAYÜZ ---
+# --- CSS VE TASARIM (LCW MAVİSİ) ---
 st.markdown("""
 <style>
-    .main-header {background-color:#1c54b2; padding:15px; border-radius:10px; color:white; margin-bottom:20px;}
-    .metric-card {background-color:#f9f9f9; padding:10px; border-radius:5px; border:1px solid #ddd; text-align:center;}
+    /* Ana Başlık Alanı */
+    .block-container {padding-top: 1rem; padding-bottom: 5rem;}
+    h1 {color: #1c54b2; font-size: 1.8rem !important; margin-bottom: 0px;}
+    
+    /* Metrik Kartları */
+    div[data-testid="stMetric"] {
+        background-color: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        padding: 10px;
+        border-radius: 8px;
+        text-align: center;
+    }
+    div[data-testid="stMetricLabel"] {font-weight: bold; color: #555;}
+    
+    /* Sidebar Header */
+    .sidebar-logo {
+        color: #1c54b2;
+        font-weight: 900;
+        font-size: 28px;
+        margin-bottom: 10px;
+        text-align: left;
+    }
+    .sidebar-sub {color: #666; font-size: 12px; margin-top: -10px; margin-bottom: 20px;}
 </style>
-<div class="main-header">
-    <h1 style='font-size:24px; margin:0;'>LCW HOME | GLOBAL INTELLIGENCE</h1>
-    <p style='font-size:12px; margin:0; opacity:0.8;'>Powered by DeepSeek V3 & Serper (Esnek Mod)</p>
-</div>
 """, unsafe_allow_html=True)
 
-# --- API KEY KONTROLÜ ---
+# --- BAŞLIK ---
+st.markdown("<h1 style='text-align: center;'>LCW HOME - FİYAT ARAŞTIRMASI</h1>", unsafe_allow_html=True)
+st.markdown("<hr style='margin: 5px 0 20px 0;'>", unsafe_allow_html=True)
+
+# --- SIDEBAR BAŞLIK ---
 with st.sidebar:
-    st.header("🔑 API Anahtarları")
-    
-    DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY")
-    if not DEEPSEEK_KEY:
-        DEEPSEEK_KEY = st.text_input("DeepSeek API Key:", type="password", help="platform.deepseek.com adresinden alınır")
-    
-    SERPER_KEY = os.environ.get("SERPER_API_KEY")
-    if not SERPER_KEY:
-        SERPER_KEY = st.text_input("Serper API Key:", type="password")
-    
-    st.divider()
+    st.markdown('<div class="sidebar-logo">LCW HOME</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-sub">GLOBAL INTELLIGENCE</div>', unsafe_allow_html=True)
 
-if not DEEPSEEK_KEY or not SERPER_KEY:
-    st.warning("⚠️ Lütfen DeepSeek ve Serper API anahtarlarını giriniz.")
-    st.stop()
+    # API KEY (Gizli Giriş)
+    PERPLEXITY_KEY = os.environ.get("PERPLEXITY_API_KEY")
+    if not PERPLEXITY_KEY:
+        PERPLEXITY_KEY = st.text_input("🔑 Sistem Anahtarı", type="password")
+    
+    if not PERPLEXITY_KEY:
+        st.warning("Lütfen API anahtarını giriniz.")
+        st.stop()
 
-# --- SABİTLER VE KONFİGÜRASYON ---
+# --- VERİ SETLERİ ---
+# Not: Kosova ve Montenegro resmi olarak Euro kullanır.
 COUNTRIES = {
-    "Bulgaristan": {"curr": "BGN", "gl": "bg", "hl": "bg", "lang": "bg"},
-    "Sırbistan":   {"curr": "RSD", "gl": "rs", "hl": "sr", "lang": "sr"},
-    "Romanya":     {"curr": "RON", "gl": "ro", "hl": "ro", "lang": "ro"},
-    "Almanya":     {"curr": "EUR", "gl": "de", "hl": "de", "lang": "de"},
-    "Polonya":     {"curr": "PLN", "gl": "pl", "hl": "pl", "lang": "pl"},
-    "Türkiye":     {"curr": "TRY", "gl": "tr", "hl": "tr", "lang": "tr"},
+    "Bulgaristan":  {"curr": "BGN", "lang": "bg"},
+    "Yunanistan":   {"curr": "EUR", "lang": "el"},
+    "Kazakistan":   {"curr": "KZT", "lang": "kk"},
+    "Rusya":        {"curr": "RUB", "lang": "ru"},
+    "Ukrayna":      {"curr": "UAH", "lang": "uk"},
+    "Bosna Hersek": {"curr": "BAM", "lang": "bs"},
+    "Sırbistan":    {"curr": "RSD", "lang": "sr"},
+    "Montenegro":   {"curr": "EUR", "lang": "sr"}, # Karadağ Euro kullanır
+    "Arnavutluk":   {"curr": "ALL", "lang": "sq"},
+    "Makedonya":    {"curr": "MKD", "lang": "mk"},
+    "Kosova":       {"curr": "EUR", "lang": "sq"}, # Kosova Euro kullanır
+    "Moldova":      {"curr": "MDL", "lang": "ro"},
+    "Hırvatistan":  {"curr": "EUR", "lang": "hr"},
+    "Romanya":      {"curr": "RON", "lang": "ro"},
+    "Mısır":        {"curr": "EGP", "lang": "ar"},
+    "Fas":          {"curr": "MAD", "lang": "ar"},
+    "Irak":         {"curr": "IQD", "lang": "ar"},
 }
 
-BRANDS = ["LC Waikiki", "Sinsay", "Pepco", "Zara Home", "H&M Home", "Jysk", "IKEA", "English Home"]
+BRANDS = ["LC Waikiki", "Sinsay", "Pepco", "Zara Home", "H&M Home", "Jysk", "Primark", "Jumbo", "English Home"]
 
-# --- YARDIMCI FONKSİYONLAR ---
+# --- FONKSİYONLAR ---
 
 @st.cache_data(ttl=3600)
-def get_exchange_rates():
-    """Güncel kurları çeker. Taban: TRY"""
+def get_rates():
+    """Kur verisini çeker"""
     try:
-        url = "https://api.exchangerate-api.com/v4/latest/TRY"
-        response = requests.get(url)
-        data = response.json()
-        rates = data.get("rates", {})
-        
-        conversion_rates = {}
-        for code, rate in rates.items():
-            if rate > 0:
-                conversion_rates[code] = 1 / rate
-        
-        if "EUR" in conversion_rates:
-            conversion_rates["BAM"] = conversion_rates["EUR"] / 1.95583
-            
-        return conversion_rates
-    except Exception as e:
-        st.error(f"Kur verisi çekilemedi: {e}")
+        r = requests.get("https://api.exchangerate-api.com/v4/latest/TRY").json()['rates']
+        rates = {k: 1/v for k, v in r.items() if v > 0} # 1 Yabancı Para = Kaç TL
+        # BAM (Bosna) Euro'ya endekslidir
+        if "EUR" in rates: 
+            rates["BAM"] = rates["EUR"] / 1.95583
+        return rates
+    except:
         return None
 
 def translate_text(text, target_lang):
-    """Google Translate kullanarak çeviri yapar"""
     if target_lang == 'tr': return text
     try:
         return GoogleTranslator(source='auto', target=target_lang).translate(text)
     except:
         return text
 
-def search_serper(query, gl, hl):
-    """Google Serper API üzerinden arama yapar"""
-    url = "https://google.serper.dev/search"
-    payload = json.dumps({
-        "q": query,
-        "gl": gl,
-        "hl": hl,
-        "num": 20 # Daha fazla sonuç gelsin diye 20'ye çıkardım
-    })
-    headers = {'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json'}
+def search_with_perplexity(brand, product_local, country, currency_code):
+    """Perplexity Sonar-Pro ile Arama"""
+    url = "https://api.perplexity.ai/chat/completions"
     
-    try:
-        response = requests.post(url, headers=headers, data=payload)
-        return response.json()
-    except Exception as e:
-        st.error(f"Arama hatası: {e}")
-        return None
-
-def analyze_with_deepseek(search_data, brand, product_name, currency_code):
-    """DeepSeek API (OpenAI Uyumlu) kullanarak analiz yapar"""
+    system_prompt = "You are a precise pricing assistant. Output only strictly valid JSON."
+    user_prompt = f"""
+    Search for the product category "{product_local}" for brand "{brand}" in {country}.
     
-    context_text = ""
-    if "organic" in search_data:
-        for item in search_data["organic"]:
-            title = item.get('title', '')
-            snippet = item.get('snippet', '')
-            price = item.get('price', item.get('priceRange', 'N/A'))
-            link = item.get('link', '')
-            context_text += f"PRODUCT: {title} | DESC: {snippet} | PRICE_TAG: {price} | URL: {link}\n"
+    RULES:
+    1. Find 5 to 10 products from the official site or major local retailers.
+    2. Extract the exact price. Convert text like "1.299,99 RSD" to float 1299.99.
+    3. Get the original product name in local language.
+    4. Ignore out of stock or completely irrelevant items.
     
-    if not context_text:
-        return None
-
-    # --- YENİ ESNEK PROMPT ---
-    # Burada AI'a diyoruz ki: Tam eşleşme yoksa bile benzer ev ürünlerini getir.
-    
-    system_msg = "You are a helpful data extraction assistant. You output valid JSON."
-    user_msg = f"""
-    I have search results for "{brand}" looking for "{product_name}".
-    
-    TASKS:
-    1. Search for products matching "{product_name}".
-    2. IMPORTANT: If an exact match is not found, ALSO accept similar 'Home Textile' products (e.g., if looking for Duvet, accept Curtains, Blankets, Pillowcases) but try to avoid completely irrelevant items like Clothing/Underwear.
-    3. EXTRACT the price as a FLOAT number (use dot '.' for decimals). 
-       - Remove currency symbols. 
-       - Example: "10,99 €" -> 10.99
-       - Example: "40.00 лв" -> 40.00
-    
-    SEARCH DATA:
-    {context_text}
-    
-    OUTPUT FORMAT (JSON ONLY):
+    OUTPUT JSON:
     {{
-      "products": [
-        {{
-          "name": "Product Name from Title",
-          "price": 40.00, 
-          "currency": "{currency_code}",
-          "url": "Product Link"
-        }}
-      ]
+        "products": [
+            {{ "name": "Local Product Name", "price": 10.50, "url": "http..." }}
+        ]
     }}
     """
     
-    # DeepSeek API Endpoint
-    url = "https://api.deepseek.com/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {DEEPSEEK_KEY}"
-    }
-    data = {
-        "model": "deepseek-chat",  # DeepSeek V3
+    payload = {
+        "model": "sonar-pro",
         "messages": [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg}
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
         ],
-        "response_format": {
-            "type": "json_object"
-        },
         "temperature": 0.1
     }
+    headers = { "Authorization": f"Bearer {PERPLEXITY_KEY}", "Content-Type": "application/json" }
     
     try:
-        res = requests.post(url, headers=headers, json=data)
-        if res.status_code == 200:
-            content = res.json()['choices'][0]['message']['content']
-            return json.loads(content)
-        else:
-            st.error(f"DeepSeek Hatası: {res.status_code} | {res.text}")
-            return None
+        response = requests.post(url, json=payload, headers=headers)
+        if response.status_code == 200:
+            clean = response.json()['choices'][0]['message']['content'].replace("```json", "").replace("```", "").strip()
+            return json.loads(clean)
+        return None
     except Exception as e:
-        st.error(f"AI Bağlantı Hatası: {e}")
+        st.error(f"Hata: {e}")
         return None
 
-# --- ANA AKIŞ ---
-
-# Yan Menü
+# --- YAN MENÜ FİLTRELERİ ---
 with st.sidebar:
-    st.header("🔎 Arama Kriterleri")
-    sel_country = st.selectbox("Hedef Ülke", list(COUNTRIES.keys()))
-    sel_brand = st.selectbox("Rakip Marka", BRANDS)
-    q_tr = st.text_input("Aranacak Ürün (Türkçe)", "Çift Kişilik Nevresim Takımı")
+    st.header("🔎 Filtreler")
+    sel_country = st.selectbox("Ülke", list(COUNTRIES.keys()))
+    sel_brand = st.selectbox("Marka", BRANDS)
+    q_tr = st.text_input("Ürün (TR)", "Çift Kişilik Nevresim")
     
-    start_btn = st.button("Analizi Başlat (DeepSeek) 🚀", type="primary")
+    st.markdown("---")
+    btn_analyze = st.button("Fiyatları Getir 🚀", type="primary", use_container_width=True)
 
-# Ana Ekran
-if start_btn:
-    # 1. Hazırlık
-    country_conf = COUNTRIES[sel_country]
-    target_currency = country_conf['curr']
+# --- CANLI KUR GÖSTERGESİ (SOL ALT) ---
+rates = get_rates()
+conf = COUNTRIES[sel_country]
+curr_code = conf["curr"]
+
+if rates:
+    usd_tl = 1 / rates.get("USD", 1) # 1 USD kaç TL (Kur verisi TRY bazlı olduğu için ters çevir)
+    # Düzeltme: get_rates fonksiyonum 1 Yabancı = X TL veriyor.
+    # Yani rates["USD"] -> 34.50 gibi.
     
-    st.info(f"📡 {sel_brand} için '{q_tr}' ürünü {sel_country} ({target_currency}) pazarında aranıyor...")
+    usd_val = rates.get("USD", 0)
+    local_val = rates.get(curr_code, 0)
     
-    # Kur verisini çek
-    rates = get_exchange_rates()
-    if not rates:
-        st.stop()
-        
-    usd_rate = rates.get("USD", 1.0)
-    local_rate = rates.get(target_currency, 1.0)
-    
-    # 2. Çeviri
-    q_local = translate_text(q_tr, country_conf["lang"])
-    st.markdown(f"**Yerel Dilde Arama:** `{q_local}`")
-    
-    # 3. Google Serper Arama
-    search_query = f"{sel_brand} {sel_country} {q_local} price"
-    search_results = search_serper(search_query, country_conf["gl"], country_conf["hl"])
-    
-    if search_results:
-        # 4. AI Analizi (DeepSeek)
-        with st.spinner("🧠 DeepSeek V3 verileri analiz ediyor (Esnek Mod)..."):
-            ai_data = analyze_with_deepseek(search_results, sel_brand, q_tr, target_currency)
-        
-        if ai_data and "products" in ai_data and len(ai_data["products"]) > 0:
-            # 5. Tablo Oluşturma
-            df_data = []
-            for p in ai_data["products"]:
-                try:
-                    price_raw = float(p.get("price", 0))
-                except:
-                    price_raw = 0.0
-                
-                if price_raw > 0:
-                    price_tl = price_raw * local_rate
-                    price_usd = price_tl / usd_rate
-                    
-                    df_data.append({
-                        "Ürün Adı": p.get("name"),
-                        f"Fiyat ({target_currency})": f"{price_raw:,.2f}",
-                        "Fiyat (TL)": f"{price_tl:,.2f} ₺",
-                        "Fiyat (USD)": f"${price_usd:,.2f}",
-                        "Link": p.get("url")
-                    })
-            
-            if df_data:
-                st.success(f"✅ {len(df_data)} adet ürün bulundu ve analiz edildi.")
-                df = pd.DataFrame(df_data)
-                
-                st.dataframe(
-                    df, 
-                    column_config={
-                        "Link": st.column_config.LinkColumn("Ürün Linki")
-                    },
-                    use_container_width=True
-                )
-                
-                avg_price = pd.Series([float(x['Fiyat (TL)'].replace(' ₺','').replace(',','')) for x in df_data]).mean()
-                st.metric(label="Ortalama Fiyat (TL)", value=f"{avg_price:,.2f} ₺")
-                
-            else:
-                st.warning("Ürün bulundu ancak fiyatlar 0 veya geçersiz geldi.")
+    with st.sidebar:
+        st.markdown("### 💰 Güncel Kurlar")
+        c1, c2 = st.columns(2)
+        c1.metric("USD/TRY", f"{usd_val:.2f} ₺")
+        if curr_code != "TRY":
+            c2.metric(f"{curr_code}/TRY", f"{local_val:.2f} ₺")
         else:
-            st.warning("Google'da sonuçlar var ancak AI tam eşleşme bulamadı.")
-            with st.expander("Ham Arama Sonuçlarını Gör"):
-                st.json(search_results)
+            c2.metric("TRY", "1.00")
+
+# --- ANA EKRAN İŞLEMLERİ ---
+if btn_analyze:
+    if not rates: st.error("Kur verisi alınamadı!"); st.stop()
+    
+    # 1. Çeviri
+    q_local = translate_text(q_tr, conf["lang"])
+    
+    with st.spinner(f"🌍 {sel_country} pazarında {sel_brand} aranıyor..."):
+        data = search_with_perplexity(sel_brand, q_local, sel_country, curr_code)
+        
+    if data and "products" in data:
+        # 2. Veri İşleme
+        table_rows = []
+        prices_tl = []
+        
+        usd_rate = rates.get("USD", 1) # 1 USD = X TL
+        local_rate = rates.get(curr_code, 1) # 1 Yerel = Y TL
+        
+        for p in data["products"]:
+            try:
+                p_raw = float(p.get("price", 0))
+            except:
+                p_raw = 0.0
+            
+            if p_raw > 0:
+                p_tl = p_raw * local_rate
+                p_usd = p_tl / usd_rate
+                
+                prices_tl.append(p_tl)
+                
+                table_rows.append({
+                    "Ürün Yerel Adı": p.get("name"),
+                    "Ürün Türkçe Adı": q_tr,
+                    "Yerel Fiyat": p_raw,     # Sayısal kalsın (sıralama için)
+                    "USD": p_usd,             # Sayısal kalsın
+                    "TL": p_tl,               # Sayısal kalsın
+                    "Link": p.get("url")
+                })
+        
+        if table_rows:
+            df = pd.DataFrame(table_rows)
+            
+            # --- KPI METRİKLERİ ---
+            count = len(df)
+            avg_tl = sum(prices_tl) / count
+            min_tl = min(prices_tl)
+            max_tl = max(prices_tl)
+            
+            # Yardımcı Fonksiyon: 3'lü Fiyat Stringi Oluşturma
+            def fmt_price(tl_val):
+                usd_val = tl_val / usd_rate
+                loc_val = tl_val / local_rate
+                return f"{tl_val:,.0f} ₺\n(${usd_val:,.1f})\n({loc_val:,.1f} {curr_code})"
+
+            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+            kpi1.metric("Bulunan Ürün", f"{count} Adet")
+            kpi2.metric("Ortalama", "Ort.", delta=None, help="Ortalama Fiyat")
+            kpi2.markdown(f"<div style='text-align:center; font-weight:bold; white-space: pre-line;'>{fmt_price(avg_tl)}</div>", unsafe_allow_html=True)
+            
+            kpi3.metric("En Düşük", "Min", delta=None)
+            kpi3.markdown(f"<div style='text-align:center; font-weight:bold; white-space: pre-line;'>{fmt_price(min_tl)}</div>", unsafe_allow_html=True)
+            
+            kpi4.metric("En Yüksek", "Max", delta=None)
+            kpi4.markdown(f"<div style='text-align:center; font-weight:bold; white-space: pre-line;'>{fmt_price(max_tl)}</div>", unsafe_allow_html=True)
+            
+            st.markdown("---")
+            
+            # --- TABLO GÖSTERİMİ ---
+            # Gösterim için formatlı kopya oluşturuyoruz, ama orijinali excel için saklıyoruz
+            df_display = df.copy()
+            
+            st.dataframe(
+                df_display,
+                column_config={
+                    "Link": st.column_config.LinkColumn(
+                        "Link", display_text="Ürüne Git 🔗"
+                    ),
+                    "Yerel Fiyat": st.column_config.NumberColumn(f"Fiyat ({curr_code})", format="%.2f"),
+                    "USD": st.column_config.NumberColumn("USD ($)", format="$%.2f"),
+                    "TL": st.column_config.NumberColumn("TL (₺)", format="%.2f ₺"),
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            # --- EXCEL İNDİR ---
+            @st.cache_data
+            def convert_df(df):
+                return df.to_csv(index=False).encode('utf-8-sig')
+
+            csv = convert_df(df)
+            st.download_button(
+                label="💾 Tabloyu Excel Olarak İndir",
+                data=csv,
+                file_name=f'lcw_analiz_{sel_brand}_{sel_country}.csv',
+                mime='text/csv',
+            )
+            
+        else:
+            st.warning("Ürün bulundu ancak geçerli fiyat bilgisi okunamadı.")
     else:
-        st.error("Google araması sonuç döndürmedi.")
+        st.error("Perplexity sonuç döndüremedi. Ülke veya marka adını kontrol edin.")
