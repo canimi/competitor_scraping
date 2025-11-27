@@ -14,15 +14,30 @@ st.set_page_config(page_title="LCW Home Global", layout="wide", page_icon="🏠"
 API_KEY = os.environ.get("PERPLEXITY_API_KEY")
 
 if not API_KEY:
-    st.error("🚨 HATA: API Anahtarı bulunamadı!")
-    st.info("Render Dashboard -> Environment kısmına 'PERPLEXITY_API_KEY' adıyla anahtarınızı ekleyin.")
+    st.error("🚨 HATA: API Anahtarı bulunamadı! Lütfen Environment Variables kontrol edin.")
     st.stop()
 
 # --- SABİTLER ---
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 FINAL_MODEL = "sonar"
 
-# Ülke ve Para Birimi Eşleşmesi
+# --- DOMAIN İPUÇLARI (Sinsay ve Pepco Sorunu İçin Çözüm) ---
+# Yapay zekaya doğru siteyi fısıldıyoruz.
+DOMAIN_MAP = {
+    "Sinsay": {
+        "Bulgaristan": "sinsay.com/bg", "Romanya": "sinsay.com/ro",
+        "Polonya": "sinsay.com/pl", "Türkiye": "sinsay.com/tr",
+        "Bosna Hersek": "sinsay.com/ba", "Sırbistan": "sinsay.com/rs"
+    },
+    "Pepco": {
+        "Bulgaristan": "pepco.bg", "Romanya": "pepco.ro",
+        "Polonya": "pepco.pl", "Bosna Hersek": "pepco.ba",
+        "Sırbistan": "pepco.rs"
+    },
+    "Zara": {"Bulgaristan": "zara.com/bg", "Türkiye": "zara.com/tr"},
+    "H&M": {"Bulgaristan": "hm.com/bg", "Türkiye": "hm.com/tr"}
+}
+
 COUNTRIES = {
     "Türkiye": "TRY", "Almanya": "EUR", "Bosna Hersek": "BAM",
     "Sırbistan": "RSD", "Bulgaristan": "BGN", "Yunanistan": "EUR",
@@ -33,39 +48,24 @@ COUNTRIES = {
 
 BRANDS = ["LC Waikiki", "Sinsay", "Pepco", "Zara", "H&M", "Mango", "Primark", "English Home", "IKEA", "Jysk"]
 
-# --- CANLI KUR ÇEKME (API) ---
-@st.cache_data(ttl=3600) # 1 saat boyunca önbellekte tut, sürekli istek atmasın
+# --- CANLI KUR ---
+@st.cache_data(ttl=3600)
 def fetch_live_rates():
-    """
-    Ücretsiz API kullanarak canlı kurları çeker.
-    Base: TRY (Türk Lirası) üzerinden hesaplar.
-    """
     try:
-        # Bu API ücretsizdir ve key gerektirmez.
         url = "https://api.exchangerate-api.com/v4/latest/TRY"
         response = requests.get(url)
         data = response.json()
         rates = data["rates"]
-        
-        # API bize "1 TL kaç Dolar" veriyor. Biz "1 Dolar kaç TL" istiyoruz.
-        # Bu yüzden 1/rate yapıyoruz.
-        
         live_rates = {}
         for currency, rate in rates.items():
             if rate > 0:
                 live_rates[currency] = 1 / rate
-                
-        # Manuel düzeltmeler (Bazı egzotik para birimleri API'da olmayabilir)
-        # BAM (Bosna) genelde EUR'ya endekslidir (1.95583).
         if "EUR" in live_rates:
             live_rates["BAM"] = live_rates["EUR"] / 1.95583 
-            
         return live_rates, data["date"]
-    except Exception as e:
-        st.error(f"Kur servisine erişilemedi: {e}")
+    except:
         return None, None
 
-# Kurları Başlangıçta Çek
 LIVE_RATES, RATE_DATE = fetch_live_rates()
 
 # --- YAN MENÜ ---
@@ -84,81 +84,71 @@ selected_country = st.sidebar.selectbox("Ülke", list(COUNTRIES.keys()))
 selected_brand = st.sidebar.selectbox("Marka", BRANDS)
 query_turkish = st.sidebar.text_input("Ürün Adı (TR)", "Çift Kişilik Battaniye")
 
-# Canlı Kur Bilgi Kartı
 with st.sidebar.expander("💸 Canlı Kur Bilgisi", expanded=True):
     if LIVE_RATES:
-        usd_try = LIVE_RATES.get("USD", 0)
-        eur_try = LIVE_RATES.get("EUR", 0)
+        st.write(f"🇺🇸 USD: **{LIVE_RATES.get('USD',0):.2f} ₺**")
+        st.write(f"🇪🇺 EUR: **{LIVE_RATES.get('EUR',0):.2f} ₺**")
         target_curr = COUNTRIES[selected_country]
-        target_rate = LIVE_RATES.get(target_curr, 0)
-        
-        st.write(f"🇺🇸 USD: **{usd_try:.2f} ₺**")
-        st.write(f"🇪🇺 EUR: **{eur_try:.2f} ₺**")
-        
         if target_curr not in ["USD", "EUR", "TRY"]:
-             st.write(f"🏳️ {target_curr}: **{target_rate:.2f} ₺**")
-        
-        st.caption(f"Güncelleme: {RATE_DATE}")
-    else:
-        st.warning("Kur verisi alınamadı.")
+             st.write(f"🏳️ {target_curr}: **{LIVE_RATES.get(target_curr,0):.2f} ₺**")
+        st.caption(f"Tarih: {RATE_DATE}")
 
-# --- YARDIMCI FONKSİYONLAR ---
+# --- FONKSİYONLAR ---
 def extract_price_number(price_str):
     if not price_str: return 0.0
-    # Önce genel temizlik
     clean_str = str(price_str).replace(" ", "")
-    
-    # Avrupa formatı (1.200,50) mı yoksa US formatı (1,200.50) mı?
-    # Genelde basit bir replace iş görür ama regex ile sayıyı avlayalım.
-    # Virgülü noktaya çevirip sadece sayıları alalım (Basit yaklaşım)
-    
-    # Bazı para birimlerinde nokta binlik, virgül ondalıktır.
-    # Python float nokta ister.
     if "," in clean_str and "." in clean_str:
         if clean_str.find(",") < clean_str.find("."):
-            clean_str = clean_str.replace(",", "") # 1,200.50 -> 1200.50
+            clean_str = clean_str.replace(",", "")
         else:
-            clean_str = clean_str.replace(".", "").replace(",", ".") # 1.200,50 -> 1200.50
+            clean_str = clean_str.replace(".", "").replace(",", ".")
     elif "," in clean_str:
         clean_str = clean_str.replace(",", ".")
-        
     nums = re.findall(r"[-+]?\d*\.\d+|\d+", clean_str)
     return float(nums[0]) if nums else 0.0
 
 def calculate_prices(raw_price_str, currency_code):
-    """Canlı kurları kullanarak hesaplama yapar."""
     amount = extract_price_number(raw_price_str)
     if amount == 0 or not LIVE_RATES: return 0, 0
-    
-    # 1 Birim Yabancı Para = Kaç TL?
     rate_to_tl = LIVE_RATES.get(currency_code, 0)
-    
-    # 1 Dolar = Kaç TL?
-    usd_rate = LIVE_RATES.get("USD", 1)
-    
-    # Hesaplama
     price_tl = amount * rate_to_tl
-    price_usd = price_tl / usd_rate if usd_rate else 0
-    
+    price_usd = price_tl / LIVE_RATES.get("USD", 1)
     return round(price_tl, 2), round(price_usd, 2)
 
 def translate_text(text, target="tr"):
     try:
         if target == "tr": return text
+        # Google Translate ile kesin çeviri
         return GoogleTranslator(source='auto', target=target).translate(text)
     except:
         return text
 
 def search_with_perplexity(brand, country, translated_query, currency_hint):
+    # Domain haritasından doğru siteyi bulmaya çalışalım
+    specific_domain = DOMAIN_MAP.get(brand, {}).get(country, "")
+    
+    domain_instruction = ""
+    if specific_domain:
+        domain_instruction = f"SEARCH ONLY ON THIS DOMAIN: {specific_domain}"
+    else:
+        domain_instruction = f"Search on the official {brand} website for {country}."
+
     system_prompt = "You are a price scraping bot. Return ONLY JSON. No text."
+    
+    # Prompt'u Sinsay ve Pepco bulacak şekilde güçlendirdik
     user_prompt = f"""
-    Go to '{brand}' official website for '{country}'. Search for: '{translated_query}'.
-    Currency: {currency_hint}.
+    {domain_instruction}
+    Search query: '{translated_query}'.
+    Currency must be: {currency_hint}.
+    
+    IMPORTANT: Provide the specific product name in JSON.
+    
     Extract 5-10 products. Return JSON with 'products':
-    - 'name': Local product name
+    - 'name': Local product name (as seen on site)
     - 'price': Price string with currency
-    - 'url': Product link
+    - 'url': Direct product link
     """
+    
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     payload = {
         "model": FINAL_MODEL,
@@ -185,14 +175,12 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
         st.warning("Lütfen ürün adı giriniz.")
     else:
         with st.status("Veri toplanıyor...", expanded=True) as status:
-            # 1. Çeviri
             lang_map = {"Türkiye":"tr", "Bulgaristan":"bg", "Yunanistan":"el", "Bosna Hersek":"bs", "Sırbistan":"sr", "İngiltere":"en", "Almanya":"de", "Romanya":"ro", "Rusya":"ru"}
             target_lang = lang_map.get(selected_country, "en")
             
             translated_query = translate_text(query_turkish, target_lang) if target_lang != "tr" else query_turkish
-            st.write(f"🧩 Çeviri: **{translated_query}**")
+            st.write(f"🧩 Çeviri: **{translated_query}** (Aranan Kelime)")
             
-            # 2. Arama
             result = search_with_perplexity(selected_brand, selected_country, translated_query, COUNTRIES[selected_country])
             status.update(label="Tamamlandı", state="complete")
 
@@ -201,30 +189,44 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
             currency_code = COUNTRIES[selected_country]
             
             table_data = []
-            excel_lines = ["Ürün Adı\tOrijinal İsim\tYerel Fiyat\tTL Fiyatı\tUSD Fiyatı\tLink"]
+            # TSV Başlığı (Excel için)
+            excel_lines = ["Ürün Adı (TR)\tOrijinal İsim\tYerel Fiyat\tTL Fiyatı\tUSD Fiyatı\tLink"]
             
             prices_tl = []
 
-            for item in products:
+            # Progress bar ile çeviri işlemini göster
+            progress_bar = st.progress(0)
+            total_items = len(products)
+
+            for i, item in enumerate(products):
                 local_price = str(item.get("price", "0"))
                 local_name = item.get("name", "-")
                 link = item.get("url", "#")
                 
-                # Dinamik Hesaplama
+                # Hesaplamalar
                 price_tl, price_usd = calculate_prices(local_price, currency_code)
-                name_tr = translate_text(local_name, "tr") if target_lang != "tr" else local_name
+                
+                # TÜRKÇE ÇEVİRİSİ (ZORUNLU)
+                # Google Translate'i her ürün adı için çalıştırıyoruz
+                name_tr = translate_text(local_name, "tr")
                 
                 if price_tl > 0: prices_tl.append(price_tl)
 
+                # Görsel Tablo Verisi
                 table_data.append({
-                    "Ürün Adı": name_tr,
+                    "Ürün Adı (TR)": name_tr, # Türkçe en başta
+                    "Orijinal İsim": local_name,
                     "Yerel Fiyat": local_price,
                     "TL Fiyatı": f"{price_tl:,.2f} ₺",
                     "USD Fiyatı": f"${price_usd:,.2f}",
                     "Link": link
                 })
                 
+                # Excel Verisi
                 excel_lines.append(f"{name_tr}\t{local_name}\t{local_price}\t{price_tl:,.2f}\t{price_usd:,.2f}\t{link}")
+                progress_bar.progress((i + 1) / total_items)
+
+            progress_bar.empty()
 
             # --- METRİKLER ---
             avg_price = sum(prices_tl) / len(prices_tl) if prices_tl else 0
@@ -233,7 +235,7 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
 
             st.markdown("---")
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Ürün Sayısı", f"{len(products)}")
+            col1.metric("Bulunan Ürün", f"{len(products)}")
             col2.metric("Ortalama", f"{avg_price:,.0f} ₺")
             col3.metric("En Düşük", f"{min_price:,.0f} ₺")
             col4.metric("En Yüksek", f"{max_price:,.0f} ₺")
@@ -241,18 +243,30 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
 
             # --- EXCEL KOPYALAMA ---
             st.subheader("📋 Excel'e Kopyala (TSV)")
-            st.info("Köşedeki kopyala ikonuna bas, Excel'e git ve yapıştır.")
             st.code("\n".join(excel_lines), language="text")
 
-            # --- TABLO ---
-            st.subheader("🖼️ Görsel Rapor")
+            # --- GÖRSEL TABLO (GÜZEL LİNKLER) ---
+            st.subheader("🖼️ Ürün Detayları")
             df = pd.DataFrame(table_data)
+            
             st.data_editor(
                 df,
-                column_config={"Link": st.column_config.LinkColumn("Link")},
+                column_config={
+                    "Link": st.column_config.LinkColumn(
+                        "İncele",            # Sütun Başlığı
+                        help="Ürün sayfasına git",
+                        validate="^https://.*",
+                        max_chars=100,
+                        display_text="🔗 Ürüne Git" # Link yerine bu yazacak
+                    ),
+                    "Ürün Adı (TR)": st.column_config.TextColumn(
+                        "Ürün Adı (TR)",
+                        width="medium"
+                    )
+                },
                 hide_index=True,
                 use_container_width=True
             )
             
         else:
-            st.error("Sonuç bulunamadı.")
+            st.error(f"Sonuç bulunamadı. '{selected_brand}' sitesi {selected_country} için erişilebilir olmayabilir veya bot koruması çok yüksek olabilir.")
