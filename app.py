@@ -9,109 +9,172 @@ from deep_translator import GoogleTranslator
 # --- SAYFA YAPILANDIRMASI ---
 st.set_page_config(page_title="LCW Global Intelligence", layout="wide", page_icon="🧿")
 
-# --- CSS: BAŞLIK YUKARI + DARK MODE ---
+# --- CSS ---
 st.markdown("""
 <style>
-    /* 1. BAŞLIĞI ZORLA YUKARI ÇEKME OPERASYONU */
-    .block-container {
-        padding-top: 1rem !important; /* Üst boşluğu yok et */
-        padding-bottom: 5rem;
-    }
-    header {visibility: hidden;} /* Streamlit menüsünü gizle (opsiyonel) */
-    
-    /* Genel Arka Plan */
-    .stApp {
-        background-color: #0e1117;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    }
-    
-    /* Başlık Stili */
-    h1 {
-        color: #4da6ff;
-        text-align: center;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-        text-shadow: 0 0 15px rgba(77, 166, 255, 0.6);
-        margin-top: -20px !important; /* Negatif margin ile yukarı yapıştır */
-        padding-bottom: 20px;
-    }
-
-    /* KPI Kartları */
-    div[data-testid="stMetric"] {
-        background-color: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 12px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.5);
-    }
-    [data-testid="stMetricValue"] {
-        color: #ffffff !important;
-        font-size: 28px !important;
-        font-weight: 700 !important;
-    }
-    [data-testid="stMetricLabel"] {
-        color: #8b949e !important;
-        font-size: 14px !important;
-    }
-
-    /* Tablo ve Sidebar */
+    .block-container { padding-top: 1rem !important; padding-bottom: 5rem; }
+    header {visibility: hidden;}
+    .stApp { background-color: #0e1117; font-family: 'Segoe UI', sans-serif; }
+    h1 { color: #4da6ff; text-align: center; text-transform: uppercase; letter-spacing: 2px; text-shadow: 0 0 15px rgba(77, 166, 255, 0.6); margin-top: -20px !important; padding-bottom: 20px; }
+    div[data-testid="stMetric"] { background-color: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.5); }
+    [data-testid="stMetricValue"] { color: #ffffff !important; font-size: 28px !important; font-weight: 700 !important; }
+    [data-testid="stMetricLabel"] { color: #8b949e !important; font-size: 14px !important; }
     .stDataFrame { border: 1px solid #30363d; border-radius: 5px; }
-    [data-testid="stSidebar"] {
-        background-color: #0d1117;
-        border-right: 1px solid #30363d;
-    }
-    
-    /* Buton */
-    div.stButton > button {
-        background: linear-gradient(90deg, #1c54b2 0%, #0d3c85 100%);
-        color: white;
-        border: none;
-        padding: 12px 24px;
-        font-weight: bold;
-        width: 100%;
-        border-radius: 8px;
-    }
+    [data-testid="stSidebar"] { background-color: #0d1117; border-right: 1px solid #30363d; }
+    div.stButton > button { background: linear-gradient(90deg, #1c54b2 0%, #0d3c85 100%); color: white; border: none; padding: 12px 24px; font-weight: bold; width: 100%; border-radius: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- BAŞLIK (ARTIK EN TEPEDE) ---
+# --- BAŞLIK ---
 st.markdown("<h1>LCW HOME | GLOBAL INTELLIGENCE</h1>", unsafe_allow_html=True)
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.markdown('<h2 style="color:#4da6ff; margin-bottom:0;">LCW HOME</h2>', unsafe_allow_html=True)
     st.markdown('<p style="color:#8b949e; font-size:12px;">COMPETITOR PRICE TRACKER</p>', unsafe_allow_html=True)
+    PERPLEXITY_KEY = os.environ.get("PERPLEXITY_API_KEY") or st.text_input("🔑 Perplexity API Key", type="password")
+    if not PERPLEXITY_KEY: st.warning("⚠️ API Key Gerekli"); st.stop()
 
-    PERPLEXITY_KEY = os.environ.get("PERPLEXITY_API_KEY")
-    if not PERPLEXITY_KEY:
-        PERPLEXITY_KEY = st.text_input("🔑 Perplexity API Key", type="password")
+# --- HARDCODED URL VERİTABANI (GERÇEK ADRESLER) ---
+# Burası "Salaklık Yapmayan" kısımdır. Adresler elle girilmiştir.
+URL_DB = {
+    "Bulgaristan": {
+        "Pepco": "https://pepco.bg/",
+        "Sinsay": "https://www.sinsay.com/bg/bg/",
+        "Zara Home": "https://www.zarahome.com/bg/",
+        "H&M Home": "https://www2.hm.com/bg_bg/home.html",
+        "Jysk": "https://jysk.bg/",
+        "Jumbo": "https://www.jumbo.bg/", 
+        "English Home": "https://englishhome.bg/",
+        "Primark": "https://www.primark.com/en-us" # Global (BG özel site yok)
+    },
+    "Bosna Hersek": {
+        "Pepco": "https://pepco.ba/",
+        "Sinsay": "https://www.sinsay.com/ba/bs/",
+        "Zara Home": "https://www.zarahome.com/ba/",
+        "H&M Home": "https://www.hm.com/ba",
+        "Jysk": "https://jysk.ba/",
+        "Jumbo": "https://www.jumbo.ba/",
+        "English Home": "https://englishhome.ba/", # Varsa
+        "Primark": None
+    },
+    "Yunanistan": {
+        "Pepco": "https://pepco.gr/",
+        "Sinsay": "https://www.sinsay.com/gr/el/",
+        "Zara Home": "https://www.zarahome.com/gr/",
+        "H&M Home": "https://www2.hm.com/en_gr/home.html",
+        "Jysk": "https://jysk.gr/",
+        "Jumbo": "https://www.e-jumbo.gr/",
+        "English Home": "https://englishhome.gr/",
+        "Primark": None
+    },
+    "Romanya": {
+        "Pepco": "https://pepco.ro/",
+        "Sinsay": "https://www.sinsay.com/ro/ro/",
+        "Zara Home": "https://www.zarahome.com/ro/",
+        "H&M Home": "https://www2.hm.com/ro_ro/home.html",
+        "Jysk": "https://jysk.ro/",
+        "Jumbo": "https://www.jumbo.ro/", # Corporate/Catalog
+        "English Home": "https://englishhome.ro/",
+        "Primark": "https://www.primark.com/ro"
+    },
+    "Sırbistan": {
+        "Pepco": "https://pepco.rs/",
+        "Sinsay": "https://www.sinsay.com/rs/sr/",
+        "Zara Home": "https://www.zarahome.com/rs/",
+        "H&M Home": "https://www2.hm.com/rs_en/home.html",
+        "Jysk": "https://jysk.rs/",
+        "Jumbo": "https://www.jumbo.rs/", # Veropoulos işletiyor
+        "English Home": "https://englishhome.rs/", # Varsa
+        "Primark": None
+    },
+    "Hırvatistan": {
+        "Pepco": "https://pepco.hr/",
+        "Sinsay": "https://www.sinsay.com/hr/hr/",
+        "Zara Home": "https://www.zarahome.com/hr/",
+        "H&M Home": "https://www2.hm.com/hr_hr/home.html",
+        "Jysk": "https://jysk.hr/",
+        "Jumbo": None, 
+        "English Home": None,
+        "Primark": None
+    },
+     "Kazakistan": {
+        "Pepco": None, # Yok
+        "Sinsay": "https://www.sinsay.com/kz/ru/", # Rusça/Kazakça
+        "Zara Home": "https://www.zarahome.com/kz/",
+        "H&M Home": "https://www.hm.com/kz",
+        "Jysk": "https://jysk.kz/", # Franchise olabilir
+        "Jumbo": None,
+        "English Home": "https://englishhome.kz/", # Varsa
+        "Primark": None
+    },
+    "Rusya": {
+        # Not: Rusya'da çoğu marka kapandı veya isim değiştirdi. 
+        # Sadece açık olanları veya VPN ile erişilenleri tahmin ediyoruz.
+        "Pepco": None,
+        "Sinsay": None, # Kapandı (Re)
+        "Zara Home": None, # Kapandı
+        "H&M Home": None, # Kapandı
+        "Jysk": None,
+        "Jumbo": None,
+        "English Home": None,
+        "Primark": None
+    },
+    "Ukrayna": {
+        "Pepco": None,
+        "Sinsay": "https://www.sinsay.com/ua/uk/",
+        "Zara Home": "https://www.zarahome.com/ua/",
+        "H&M Home": "https://www.hm.com/ua",
+        "Jysk": "https://jysk.ua/",
+        "Jumbo": None,
+        "English Home": "https://englishhome.ua/",
+        "Primark": None
+    },
+    "Mısır": {
+        "Pepco": None,
+        "Sinsay": None,
+        "Zara Home": "https://www.zarahome.com/eg/",
+        "H&M Home": "https://eg.hm.com/en/",
+        "Jysk": "https://jysk.com.eg/", # Franchise
+        "Jumbo": None,
+        "English Home": "https://englishhome.com.eg/", # Varsa
+        "Primark": None
+    },
+    "Irak": {
+        "Pepco": None,
+        "Sinsay": None,
+        "Zara Home": None,
+        "H&M Home": "https://iq.hm.com/", # Franchise (Alshaya)
+        "Jysk": None,
+        "Jumbo": None,
+        "English Home": None,
+        "Primark": None
+    },
+    # Diğer ülkeler için genel varsayılan: None (Sonra eklenebilir)
+}
 
-    if not PERPLEXITY_KEY:
-        st.warning("⚠️ API Key Gerekli")
-        st.stop()
-
-# --- VERİ SETLERİ ---
-COUNTRIES = {
+# Varsayılanlar
+COUNTRIES_META = {
     "Bulgaristan":  {"curr": "BGN", "lang": "bg"},
-    "Bosna Hersek": {"curr": "BAM", "lang": "bs"}, # Pepco Burada Sorunluydu
+    "Bosna Hersek": {"curr": "BAM", "lang": "bs"},
     "Yunanistan":   {"curr": "EUR", "lang": "el"},
+    "Sırbistan":    {"curr": "RSD", "lang": "sr"},
+    "Romanya":      {"curr": "RON", "lang": "ro"},
+    "Hırvatistan":  {"curr": "EUR", "lang": "hr"},
     "Kazakistan":   {"curr": "KZT", "lang": "kk"},
     "Rusya":        {"curr": "RUB", "lang": "ru"},
     "Ukrayna":      {"curr": "UAH", "lang": "uk"},
-    "Sırbistan":    {"curr": "RSD", "lang": "sr"},
-    "Montenegro":   {"curr": "EUR", "lang": "sr"},
+    "Mısır":        {"curr": "EGP", "lang": "ar"},
+    "Irak":         {"curr": "IQD", "lang": "ar"},
     "Arnavutluk":   {"curr": "ALL", "lang": "sq"},
     "Makedonya":    {"curr": "MKD", "lang": "mk"},
     "Kosova":       {"curr": "EUR", "lang": "sq"},
     "Moldova":      {"curr": "MDL", "lang": "ro"},
-    "Hırvatistan":  {"curr": "EUR", "lang": "hr"},
-    "Romanya":      {"curr": "RON", "lang": "ro"},
-    "Mısır":        {"curr": "EGP", "lang": "ar"},
     "Fas":          {"curr": "MAD", "lang": "ar"},
-    "Irak":         {"curr": "IQD", "lang": "ar"},
 }
 
-BRANDS = ["LC Waikiki", "Sinsay", "Pepco", "Zara Home", "H&M Home", "Jysk", "Primark", "Jumbo", "English Home", "IKEA"]
+# LCW ve IKEA ÇIKARILDI. Sadece "Rakipler"
+BRANDS = ["Pepco", "Sinsay", "Zara Home", "H&M Home", "Jysk", "Primark", "Jumbo", "English Home"]
 
 # --- FONKSİYONLAR ---
 
@@ -122,73 +185,62 @@ def get_rates():
         rates = {k: 1/v for k, v in r.items() if v > 0} 
         if "EUR" in rates: rates["BAM"] = rates["EUR"] / 1.95583
         return rates
-    except:
-        return None
+    except: return None
 
-def translate_to_local(text, target_lang):
-    if target_lang == 'tr': return text
+def translate_logic(text, mode="to_local", target_lang="en"):
     try:
-        return GoogleTranslator(source='auto', target=target_lang).translate(text)
-    except:
-        return text
-
-def translate_to_turkish(text):
-    try:
-        return GoogleTranslator(source='auto', target='tr').translate(text)
-    except:
-        return text
+        if mode == "to_local":
+            return GoogleTranslator(source='auto', target=target_lang).translate(text)
+        else: # to_turkish
+            return GoogleTranslator(source='auto', target='tr').translate(text)
+    except: return text
 
 def clean_price(price_raw):
     if not price_raw: return 0.0
-    s = str(price_raw).lower().replace("лв", "").replace("lei", "").replace("eur", "").replace("rsd", "").replace("km", "").strip()
+    s = str(price_raw).lower().replace("лв", "").replace("km", "").replace("rsd", "").replace("eur", "").strip()
     s = re.sub(r'[^\d.,]', '', s)
     if not s: return 0.0
-    
     if ',' in s and '.' in s:
         if s.find(',') > s.find('.'): s = s.replace('.', '').replace(',', '.')
         else: s = s.replace(',', '')
     elif ',' in s:
         if len(s.split(',')[-1]) == 2: s = s.replace(',', '.')
         else: s = s.replace(',', '.')
-            
     try: return float(s)
     except: return 0.0
 
-def search_sonar(brand, product_local, country, currency_code):
+def search_sonar(brand, product_local, country, currency_code, hardcoded_url):
     url = "https://api.perplexity.ai/chat/completions"
     
-    system_msg = "You are an advanced eCommerce scraper. You extract strictly structured JSON data."
+    system_msg = "You are a specialized e-commerce scraper. You output ONLY JSON."
     
-    # --- GÜNCELLENEN PROMPT (PEPCO BOSNA/BULGARİSTAN İÇİN DÜZELTME) ---
+    # --- YARATICI VE KESİN PROMPT ---
     user_msg = f"""
-    Perform a targeted search for "{brand}" products in category "{product_local}" for the country "{country}".
+    TASK: Extract prices for "{brand}" products in category "{product_local}" in {country}.
     
-    STRICT RULES:
-    1. Search ONLY on the OFFICIAL website/domain of "{brand}" for {country} (e.g., pepco.ba, pepco.bg, sinsay.com).
-    2. **CRITICAL FOR PEPCO/SINSAY:** If the brand does not have a "Buy Now" webshop, you MUST check their OFFICIAL CATALOG/OFFER pages on their official domain.
-       - Example: For Pepco Bosnia (pepco.ba), extract prices from the displayed products in the categories section.
-    3. DO NOT use 3rd party aggregators (No Glami, No Kimbino, No Akakce).
-    4. If absolutely NO official site exists in {country}, return an empty list.
+    TARGET URL (OFFICIAL): {hardcoded_url}
     
-    DATA EXTRACTION:
-    - Extract 5-10 specific products.
-    - Price MUST be a number.
-    - Provide the ORIGINAL local product name.
+    INSTRUCTIONS:
+    1.  **GO DIRECTLY TO THE TARGET URL:** Do not guess the site. Use the one provided above.
+    2.  **CATALOG vs SHOP:** 
+        - If {hardcoded_url} is a webshop (like Sinsay), find products and prices normally.
+        - If {hardcoded_url} is a CATALOG/OFFER site (like Pepco), look for the latest brochure or "Products" section and extract prices from there.
+    3.  **STRICT DATA:**
+        - Extract 5 products.
+        - Price must be numeric.
+        - Ignore items with no price.
     
-    OUTPUT JSON FORMAT:
+    OUTPUT JSON:
     {{
         "products": [
-            {{ "name": "Local Product Name", "price": 10.99, "url": "Official URL" }}
+            {{ "name": "Local Name", "price": 10.99, "url": "Actual URL Found" }}
         ]
     }}
     """
     
     payload = {
         "model": "sonar",
-        "messages": [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg}
-        ],
+        "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
         "temperature": 0.1,
         "max_tokens": 1000
     }
@@ -200,49 +252,54 @@ def search_sonar(brand, product_local, country, currency_code):
         if res.status_code == 200:
             raw = res.json()['choices'][0]['message']['content']
             clean = raw.replace("```json", "").replace("```", "").strip()
-            start = clean.find('{')
-            end = clean.rfind('}') + 1
-            if start != -1 and end != -1: clean = clean[start:end]
-            return json.loads(clean)
-        else:
-            return None
-    except:
+            if "{" in clean:
+                clean = clean[clean.find("{"):clean.rfind("}")+1]
+                return json.loads(clean)
         return None
+    except: return None
 
-# --- SIDEBAR FİLTRELERİ ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("🔎 Filtreler")
-    sel_country = st.selectbox("Ülke", list(COUNTRIES.keys()))
+    # Sadece URL_DB içinde tanımlı olan ülkeleri getirir, böylece boş ülke seçilmez
+    available_countries = list(URL_DB.keys())
+    sel_country = st.selectbox("Ülke", available_countries)
     sel_brand = st.selectbox("Marka", BRANDS)
     q_tr = st.text_input("Ürün (TR)", "Çift Kişilik Nevresim")
-    
     st.markdown("---")
-    btn_start = st.button("FİYATLARI ÇEK (SONAR) 🚀")
+    btn_start = st.button("FİYATLARI ÇEK 🚀")
 
 # --- KURLAR ---
 rates = get_rates()
-conf = COUNTRIES[sel_country]
+conf = COUNTRIES_META.get(sel_country, {"curr": "USD", "lang": "en"}) # Fallback
 curr = conf["curr"]
 
 if rates:
-    usd_val = rates.get("USD", 0)
-    loc_val = rates.get(curr, 0)
     with st.sidebar:
-        st.markdown("### 💱 Canlı Kurlar")
+        st.markdown("### 💱 Kurlar")
         c1, c2 = st.columns(2)
-        c1.metric("USD", f"{usd_val:.2f}₺")
-        c2.metric(curr, f"{loc_val:.2f}₺")
+        c1.metric("USD", f"{rates.get('USD',0):.2f}₺")
+        c2.metric(curr, f"{rates.get(curr,0):.2f}₺")
 
 # --- ANA AKIŞ ---
 if btn_start:
     if not rates: st.error("Kur verisi yok."); st.stop()
     
-    # 1. Çeviri
-    q_local = translate_to_local(q_tr, conf["lang"])
+    # 1. HARDCODED URL KONTROLÜ
+    target_url = URL_DB.get(sel_country, {}).get(sel_brand)
     
-    # 2. Sonar Araması
-    with st.spinner(f"🧿 {sel_brand} resmi sitesi taranıyor ({sel_country})..."):
-        data = search_sonar(sel_brand, q_local, sel_country, curr)
+    if not target_url:
+        st.error(f"⚠️ {sel_brand} markasının {sel_country} için tanımlı bir online mağazası veritabanımızda yok.")
+        st.stop()
+        
+    st.success(f"🎯 Hedef Site Bulundu: {target_url}")
+    
+    # 2. Çeviri
+    q_local = translate_logic(q_tr, "to_local", conf["lang"])
+    
+    # 3. Arama
+    with st.spinner(f"🧿 {sel_brand} ({sel_country}) taranıyor..."):
+        data = search_sonar(sel_brand, q_local, sel_country, curr, target_url)
     
     if data and "products" in data and len(data["products"]) > 0:
         rows = []
@@ -250,42 +307,39 @@ if btn_start:
         usd_rate = rates.get("USD", 1)
         loc_rate = rates.get(curr, 1)
         
-        progress_bar = st.progress(0, text="Ürünler tercüme ediliyor...")
-        total_products = len(data["products"])
+        # Progress bar
+        pbar = st.progress(0, text="Ürünler Türkçe'ye çevriliyor...")
+        tot = len(data["products"])
         
         for i, p in enumerate(data["products"]):
             p_raw = clean_price(p.get("price", 0))
-            
             if p_raw > 0:
                 p_tl = p_raw * loc_rate
                 p_usd = p_tl / usd_rate
                 prices_tl.append(p_tl)
                 
-                local_name = p.get("name", "")
-                translated_name = translate_to_turkish(local_name)
+                loc_name = p.get("name", "")
+                tr_name = translate_logic(loc_name, "to_turkish") # Gerçek Çeviri
                 
                 rows.append({
-                    "Ürün Yerel Adı": local_name,
-                    "Ürün Türkçe Adı": translated_name,
+                    "Ürün Yerel Adı": loc_name,
+                    "Ürün Türkçe Adı": tr_name,
                     "Yerel Fiyat": p_raw,
                     "USD": p_usd,
                     "TL": p_tl,
                     "Link": p.get("url")
                 })
-            progress_bar.progress((i + 1) / total_products)
-        progress_bar.empty()
+            pbar.progress((i + 1) / tot)
+        pbar.empty()
         
         if rows:
             df = pd.DataFrame(rows)
-            
-            # KPI
             cnt = len(df)
             avg = sum(prices_tl) / cnt
             mn = min(prices_tl)
             mx = max(prices_tl)
             
-            def fmt(val):
-                return f"{val:,.0f}₺\n(${val/usd_rate:,.1f})\n({val/loc_rate:,.1f} {curr})"
+            def fmt(val): return f"{val:,.0f}₺\n(${val/usd_rate:,.1f})\n({val/loc_rate:,.1f} {curr})"
 
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Bulunan", f"{cnt} Adet")
@@ -297,26 +351,17 @@ if btn_start:
             k4.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(mx)}</div>", unsafe_allow_html=True)
             
             st.markdown("---")
+            st.dataframe(df, column_config={
+                "Link": st.column_config.LinkColumn("Link", display_text="🔗 Git"),
+                "Yerel Fiyat": st.column_config.NumberColumn(f"Fiyat ({curr})", format="%.2f"),
+                "USD": st.column_config.NumberColumn("USD ($)", format="$%.2f"),
+                "TL": st.column_config.NumberColumn("TL (₺)", format="%.2f ₺")
+            }, use_container_width=True, hide_index=True)
             
-            # Tablo
-            st.dataframe(
-                df,
-                column_config={
-                    "Link": st.column_config.LinkColumn("Link", display_text="🔗 Ürüne Git"),
-                    "Yerel Fiyat": st.column_config.NumberColumn(f"Fiyat ({curr})", format="%.2f"),
-                    "USD": st.column_config.NumberColumn("USD ($)", format="$%.2f"),
-                    "TL": st.column_config.NumberColumn("TL (₺)", format="%.2f ₺")
-                },
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # Excel
             csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("💾 Excel İndir", csv, f"lcw_sonar_{sel_brand}.csv", "text/csv")
-            
+            st.download_button("💾 Excel İndir", csv, f"lcw_{sel_brand}_{sel_country}.csv", "text/csv")
         else:
             st.warning("Ürün bulundu ancak fiyatlar okunamadı.")
     else:
-        st.error(f"⚠️ {sel_brand} markasının {sel_country} ülkesinde erişilebilir resmi bir e-ticaret sitesi veya online kataloğu bulunamadı.")
-        st.info("İpucu: Markanın o ülkede web sitesi olmayabilir veya Sonar erişemiyor olabilir.")
+        st.error(f"⚠️ {sel_brand} sitesinde ({target_url}) '{q_local}' için ürün bulunamadı.")
+        st.info("Olası sebepler: Ürün stokta yok veya katalogda bu kategori yok.")
