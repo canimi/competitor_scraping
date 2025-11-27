@@ -22,10 +22,7 @@ st.markdown("Yapay zeka ile **gerçek zamanlı** ve **global** fiyat analizi.")
 # --- SABİTLER ---
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 
-# Model ismini daha kararlı olan 'Small' versiyon ile değiştirdik
-# Eğer Pro hesabın varsa 'large' yapabilirsin ama 'small' daha garanti çalışır.
-MODEL_NAME = "llama-3.1-sonar-small-128k-online"
-
+# Desteklenen Ülkeler
 COUNTRIES = {
     "Türkiye": "TRY",
     "Almanya": "EUR",
@@ -43,7 +40,21 @@ COUNTRIES = {
 
 BRANDS = ["Sinsay", "Pepco", "Zara", "H&M", "Mango", "Primark", "English Home", "LC Waikiki", "Bershka", "Pull&Bear"]
 
+# Perplexity Model Listesi (Güncel)
+# Biri çalışmazsa diğerini seçebilmen için listeyi genişlettim.
+AVAILABLE_MODELS = [
+    "llama-3.1-sonar-large-128k-online",
+    "llama-3.1-sonar-huge-128k-online",
+    "llama-3.1-sonar-small-128k-online" # Bu hata vermişti ama listede dursun, belki düzelir.
+]
+
 # --- YAN MENÜ ---
+st.sidebar.header("⚙️ Ayarlar")
+
+# Model Seçimi (Hata alırsan buradan değiştirebilirsin)
+selected_model = st.sidebar.selectbox("AI Modeli", AVAILABLE_MODELS, index=0)
+
+st.sidebar.divider()
 st.sidebar.header("🔍 Arama Kriterleri")
 
 selected_country = st.sidebar.selectbox("Ülke Seçiniz", list(COUNTRIES.keys()))
@@ -72,8 +83,8 @@ def translate_query(text, country_name):
     except:
         return text, text
 
-def search_with_perplexity(brand, country, translated_query, currency_hint):
-    """API Sorgusu - Gelişmiş Hata Yakalama ile"""
+def search_with_perplexity(brand, country, translated_query, currency_hint, model_name):
+    """API Sorgusu"""
     
     system_prompt = (
         "You are a strict data extraction assistant. "
@@ -104,20 +115,18 @@ def search_with_perplexity(brand, country, translated_query, currency_hint):
     }
     
     payload = {
-        "model": MODEL_NAME, 
+        "model": model_name, 
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.1,
-        "max_tokens": 1024, # Eksik parametre hatasını önlemek için eklendi
+        "max_tokens": 1024,
         "return_citations": False
     }
 
     try:
         response = requests.post(PERPLEXITY_URL, json=payload, headers=headers)
-        
-        # Eğer hata varsa (400, 401 vs) Python hata fırlatacak
         response.raise_for_status()
         
         content = response.json()['choices'][0]['message']['content']
@@ -126,19 +135,17 @@ def search_with_perplexity(brand, country, translated_query, currency_hint):
         return json.loads(content)
         
     except requests.exceptions.HTTPError as err:
-        # 400 Hatasının DETAYINI görelim
-        st.error(f"HTTP Hatası Oluştu: {err}")
+        st.error(f"HTTP Hatası: {err}")
         try:
-            # Perplexity'nin gönderdiği hata mesajını ekrana basıyoruz
             error_details = response.json()
-            st.warning("Perplexity Hata Detayı:")
+            st.warning("Perplexity Hata Mesajı:")
             st.json(error_details)
         except:
-            st.text(response.text)
+            pass
         return None
         
     except Exception as e:
-        st.error(f"Genel Hata: {e}")
+        st.error(f"Beklenmeyen Hata: {e}")
         return None
 
 # --- ANA AKIŞ ---
@@ -153,12 +160,13 @@ if st.sidebar.button("Fiyatları Getir 🚀"):
             status.update(label=f"Aranıyor: {translated} ({selected_country})", state="complete")
         
         # 2. API Sorgu
-        with st.spinner(f"🤖 Yapay zeka {selected_brand} sitesini tarıyor..."):
+        with st.spinner(f"🤖 Yapay zeka ({selected_model}) tarıyor..."):
             result = search_with_perplexity(
                 selected_brand, 
                 selected_country, 
                 translated, 
-                COUNTRIES[selected_country]
+                COUNTRIES[selected_country],
+                selected_model
             )
             
         # 3. Sonuç
@@ -181,4 +189,4 @@ if st.sidebar.button("Fiyatları Getir 🚀"):
                     use_container_width=True
                 )
             else:
-                st.warning(f"🔍 {selected_brand} sitesinde bu ürün için net sonuç bulunamadı.")
+                st.warning(f"🔍 {selected_brand} sitesinde net sonuç bulunamadı. Ürün ismini daha spesifik yazmayı deneyin.")
