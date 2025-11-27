@@ -1,41 +1,46 @@
 import streamlit as st
 import pandas as pd
-import requests
-import json
 import os
+import json
 import re
 from deep_translator import GoogleTranslator
 from datetime import datetime
+import google.generativeai as genai
+from duckduckgo_search import DDGS
+import requests
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="LCW Home Global", layout="wide", page_icon="🏠")
+st.set_page_config(page_title="LCW Home Global (Google Edition)", layout="wide", page_icon="🏠")
 
-# --- ENV KONTROLÜ ---
-API_KEY = os.environ.get("PERPLEXITY_API_KEY")
+# --- ENV KONTROLÜ (GOOGLE API) ---
+# Render veya Streamlit Cloud'da 'GOOGLE_API_KEY' olarak kaydedilecek.
+API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 if not API_KEY:
-    st.error("🚨 HATA: API Anahtarı bulunamadı! Lütfen Environment Variables kontrol edin.")
+    st.error("🚨 HATA: Google API Anahtarı bulunamadı!")
+    st.info("Lütfen bir Google AI Studio API anahtarı girin.")
     st.stop()
 
-# --- SABİTLER ---
-PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
-FINAL_MODEL = "sonar"
+# Google Gemini Kurulumu
+genai.configure(api_key=API_KEY)
+# En hızlı ve ekonomik model: Gemini 1.5 Flash
+MODEL_NAME = "gemini-1.5-flash"
 
-# DOMAIN HARİTASI
+# --- DOMAIN HARİTASI ---
 DOMAIN_MAP = {
     "Sinsay": {
-        "Bulgaristan": "sinsay.com/bg", "Romanya": "sinsay.com/ro",
-        "Polonya": "sinsay.com/pl", "Türkiye": "sinsay.com/tr",
-        "Bosna Hersek": "sinsay.com/ba", "Sırbistan": "sinsay.com/rs"
+        "Bulgaristan": "site:sinsay.com/bg", "Romanya": "site:sinsay.com/ro",
+        "Polonya": "site:sinsay.com/pl", "Türkiye": "site:sinsay.com/tr",
+        "Bosna Hersek": "site:sinsay.com/ba", "Sırbistan": "site:sinsay.com/rs"
     },
     "Pepco": {
-        "Bulgaristan": "pepco.bg", "Romanya": "pepco.ro",
-        "Polonya": "pepco.pl", "Bosna Hersek": "pepco.ba",
-        "Sırbistan": "pepco.rs"
+        "Bulgaristan": "site:pepco.bg", "Romanya": "site:pepco.ro",
+        "Polonya": "site:pepco.pl", "Bosna Hersek": "site:pepco.ba",
+        "Sırbistan": "site:pepco.rs"
     },
-    "Zara": {"Bulgaristan": "zara.com/bg", "Türkiye": "zara.com/tr", "Romanya": "zara.com/ro"},
-    "English Home": {"Bulgaristan": "englishhome.bg", "Romanya": "englishhome.ro", "Yunanistan": "englishhome.gr"},
-    "H&M": {"Bulgaristan": "hm.com/bg", "Türkiye": "hm.com/tr"}
+    "Zara": {"Bulgaristan": "site:zara.com/bg", "Türkiye": "site:zara.com/tr", "Romanya": "site:zara.com/ro"},
+    "English Home": {"Bulgaristan": "site:englishhome.bg", "Romanya": "site:englishhome.ro", "Yunanistan": "site:englishhome.gr"},
+    "H&M": {"Bulgaristan": "site:hm.com/bg", "Türkiye": "site:hm.com/tr"}
 }
 
 COUNTRIES = {
@@ -71,9 +76,9 @@ LIVE_RATES, RATE_DATE = fetch_live_rates()
 # --- YAN MENÜ ---
 st.sidebar.markdown(
     """
-    <div style="padding: 15px; background-color: #f0f2f6; border-left: 5px solid #1c54b2; border-radius: 4px; margin-bottom: 20px;">
-        <h1 style='color: #1c54b2; font-weight: 900; margin:0; padding:0; font-family: "Segoe UI", sans-serif; font-size: 24px;'>LCW HOME</h1>
-        <p style='color: #555; font-size: 11px; margin:0; letter-spacing: 1px;'>GLOBAL PRICE INTELLIGENCE</p>
+    <div style="padding: 15px; background-color: #f0f2f6; border-left: 5px solid #EA4335; border-radius: 4px; margin-bottom: 20px;">
+        <h1 style='color: #EA4335; font-weight: 900; margin:0; padding:0; font-family: "Segoe UI", sans-serif; font-size: 24px;'>LCW HOME</h1>
+        <p style='color: #555; font-size: 11px; margin:0; letter-spacing: 1px;'>POWERED BY GOOGLE</p>
     </div>
     """, 
     unsafe_allow_html=True
@@ -110,11 +115,9 @@ def extract_price_number(price_str):
 def calculate_prices(raw_price_str, currency_code):
     amount = extract_price_number(raw_price_str)
     if amount == 0 or not LIVE_RATES: return 0, 0, 0
-    
     rate_to_tl = LIVE_RATES.get(currency_code, 0)
     price_tl = amount * rate_to_tl
     price_usd = price_tl / LIVE_RATES.get("USD", 1)
-    
     return amount, round(price_tl, 2), round(price_usd, 2)
 
 def translate_query_text(text, target_lang):
@@ -130,37 +133,68 @@ def translate_result_to_tr(text):
     except:
         return text
 
-def search_with_perplexity(brand, country, translated_query, currency_hint):
+# --- YENİ ARAMA MOTORU (DuckDuckGo + Gemini) ---
+def search_and_process_with_google(brand, country, translated_query, currency_hint):
+    
+    # 1. ADIM: DuckDuckGo ile Arama Yap (Ücretsiz Göz)
     specific_domain = DOMAIN_MAP.get(brand, {}).get(country, "")
-    domain_instruction = f"SEARCH ONLY ON THIS DOMAIN: {specific_domain}" if specific_domain else f"Search on the official {brand} website for {country}."
+    
+    # Arama sorgusunu oluşturuyoruz. site:sinsay.com/bg gibi kısıtlamalar ekliyoruz.
+    if specific_domain:
+        search_query = f"{specific_domain} {translated_query} price"
+    else:
+        search_query = f"{brand} {country} {translated_query} price"
+        
+    try:
+        # DDGS kütüphanesi ile arama
+        results = DDGS().text(search_query, max_results=8)
+        
+        if not results:
+            return None
+            
+        # Arama sonuçlarını metne dök
+        search_context = ""
+        for res in results:
+            search_context += f"Title: {res['title']}\nLink: {res['href']}\nSnippet: {res['body']}\n\n"
+            
+    except Exception as e:
+        st.error(f"Arama Hatası: {e}")
+        return None
 
-    system_prompt = "You are a price scraping bot. Return ONLY JSON. No text."
-    user_prompt = f"""
-    {domain_instruction}
-    Search query: '{translated_query}'.
-    Currency must be: {currency_hint}.
+    # 2. ADIM: Gemini ile Analiz Et (Ücretsiz Beyin)
     
-    IMPORTANT: Provide the specific product name in JSON.
+    prompt = f"""
+    You are a data extraction assistant. I will give you search results from an online store.
+    Your task is to extract product details strictly from the text provided below.
     
-    Extract 5-10 products. Return JSON with 'products':
-    - 'name': Local product name
-    - 'price': Price string with currency
-    - 'url': Direct product link
+    Target Currency: {currency_hint}
+    
+    Search Results:
+    {search_context}
+    
+    INSTRUCTIONS:
+    1. Identify products that match the query.
+    2. Extract the Name, Price, and Link.
+    3. Return ONLY a JSON object with a 'products' list.
+    4. If price is missing, ignore the item.
+    
+    JSON Format:
+    {{
+        "products": [
+            {{ "name": "...", "price": "...", "url": "..." }}
+        ]
+    }}
     """
     
-    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": FINAL_MODEL,
-        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-        "temperature": 0.1, "return_citations": False
-    }
     try:
-        response = requests.post(PERPLEXITY_URL, json=payload, headers=headers)
-        response.raise_for_status()
-        content = response.json()['choices'][0]['message']['content']
-        content = content.replace("```json", "").replace("```", "").strip()
-        return json.loads(content)
-    except:
+        model = genai.GenerativeModel(MODEL_NAME)
+        # JSON formatında yanıt vermeye zorluyoruz
+        response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+        
+        # Gelen yanıtı parse et
+        return json.loads(response.text)
+    except Exception as e:
+        st.error(f"AI İşleme Hatası: {e}")
         return None
 
 # --- ANA EKRAN ---
@@ -173,15 +207,16 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
     if not query_turkish:
         st.warning("Lütfen ürün adı giriniz.")
     else:
-        with st.status("Veri toplanıyor...", expanded=True) as status:
+        with st.status("Google sistemi çalışıyor...", expanded=True) as status:
             lang_map = {"Türkiye":"tr", "Bulgaristan":"bg", "Yunanistan":"el", "Bosna Hersek":"bs", "Sırbistan":"sr", "İngiltere":"en", "Almanya":"de", "Romanya":"ro", "Rusya":"ru"}
             target_lang = lang_map.get(selected_country, "en")
             
             translated_query = translate_query_text(query_turkish, target_lang)
-            st.write(f"🧩 Çeviri: **{translated_query}** (Aranan Kelime)")
+            st.write(f"🔍 Google Araması: **{translated_query}**")
             
-            result = search_with_perplexity(selected_brand, selected_country, translated_query, COUNTRIES[selected_country])
-            status.update(label="Tamamlandı", state="complete")
+            # YENİ FONKSİYONU ÇAĞIRIYORUZ
+            result = search_and_process_with_google(selected_brand, selected_country, translated_query, COUNTRIES[selected_country])
+            status.update(label="İşlem Tamamlandı", state="complete")
 
         if result and "products" in result and result["products"]:
             products = result["products"]
@@ -190,7 +225,6 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
             table_data = []
             excel_lines = ["Ürün Adı (TR)\tOrijinal İsim\tYerel Fiyat\tTL Fiyatı\tUSD Fiyatı\tLink"]
             
-            # İstatistikler için listeler
             prices_tl = []
             prices_usd = []
             prices_local = []
@@ -203,9 +237,7 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
                 local_name = item.get("name", "-")
                 link = item.get("url", "#")
                 
-                # Fiyat Hesapla (Yerel, TL, USD)
                 val_local, val_tl, val_usd = calculate_prices(local_price_str, currency_code)
-                
                 name_tr = translate_result_to_tr(local_name)
                 
                 if val_tl > 0:
@@ -227,9 +259,6 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
 
             progress_bar.empty()
 
-            # --- 3 KATMANLI İSTATİSTİK PANI ---
-            
-            # Fonksiyon: Liste alır, metrik döner
             def get_stats(price_list):
                 if not price_list: return 0, 0, 0
                 return sum(price_list)/len(price_list), min(price_list), max(price_list)
@@ -242,7 +271,6 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
 
             st.markdown("---")
             
-            # 1. SATIR: TL BAZLI
             st.markdown("##### 🇹🇷 Türk Lirası Analizi")
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Bulunan Ürün", f"{product_count}")
@@ -250,7 +278,6 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
             col3.metric("En Düşük (TL)", f"{min_tl:,.0f} ₺")
             col4.metric("En Yüksek (TL)", f"{max_tl:,.0f} ₺")
             
-            # 2. SATIR: USD BAZLI
             st.markdown("##### 🇺🇸 USD Analizi")
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Bulunan Ürün", f"{product_count}")
@@ -258,7 +285,6 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
             c3.metric("En Düşük (USD)", f"${min_usd:,.2f}")
             c4.metric("En Yüksek (USD)", f"${max_usd:,.2f}")
 
-            # 3. SATIR: YEREL PARA BAZLI
             st.markdown(f"##### 🏳️ Yerel Para Analizi ({currency_code})")
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Bulunan Ürün", f"{product_count}")
@@ -268,9 +294,8 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
 
             st.markdown("---")
 
-            # --- GÖRSEL TABLO ---
             st.markdown("""
-                <h3 style='color: #1c54b2; margin-top: 0;'>🛍️ Detaylı Ürün Analizi</h3>
+                <h3 style='color: #EA4335; margin-top: 0;'>🛍️ Detaylı Ürün Analizi</h3>
             """, unsafe_allow_html=True)
             
             df = pd.DataFrame(table_data)
@@ -292,7 +317,6 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
                 use_container_width=True
             )
 
-            # --- EXCEL KOPYALAMA ---
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("""
                 <div style="display: flex; align-items: center; justify-content: space-between;">
