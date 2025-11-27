@@ -6,61 +6,98 @@ import requests
 import re
 from deep_translator import GoogleTranslator
 
-# --- SAYFA AYARLARI ---
-st.set_page_config(page_title="LCW Fiyat Araştırması", layout="wide", page_icon="🛍️")
+# --- SAYFA YAPILANDIRMASI ---
+st.set_page_config(page_title="LCW Global Intelligence", layout="wide", page_icon="🧿")
 
-# --- CSS VE TASARIM (DÜZELTİLDİ) ---
+# --- CSS: DARK MODE, NEON VE OKUNABİLİRLİK ---
 st.markdown("""
 <style>
-    /* Ana Başlık */
-    .block-container {padding-top: 1rem; padding-bottom: 5rem;}
-    h1 {color: #1c54b2; font-size: 1.8rem !important; margin-bottom: 0px;}
-    
-    /* Metrik Kartları (Kurlar ve KPI) */
-    div[data-testid="stMetric"] {
-        background-color: #f0f2f6; /* Hafif gri arka plan */
-        border: 1px solid #d1d1d1;
-        padding: 10px;
-        border-radius: 8px;
-        text-align: center;
+    /* Genel Arka Plan ve Fontlar */
+    .stApp {
+        background-color: #0e1117;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
     
-    /* ÖNEMLİ: Yazı Rengini SİYAH yapmaya zorluyoruz (Dark Mode sorunu için) */
+    /* Başlık */
+    h1 {
+        color: #4da6ff;
+        text-align: center;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        text-shadow: 0 0 15px rgba(77, 166, 255, 0.6);
+        margin-bottom: 20px !important;
+    }
+
+    /* KPI Kartları (Siyah Zemin, Beyaz Yazı) */
+    div[data-testid="stMetric"] {
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 12px;
+        padding: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+    }
     [data-testid="stMetricValue"] {
-        color: #1c54b2 !important; /* LCW Mavisi Rakamlar */
-        font-size: 24px !important;
+        color: #ffffff !important; /* BEYAZ RAKAMLAR */
+        font-size: 28px !important;
+        font-weight: 700 !important;
+        text-shadow: 0 0 10px rgba(255,255,255,0.2);
     }
     [data-testid="stMetricLabel"] {
-        color: #333333 !important; /* Koyu Gri Etiketler */
-        font-weight: bold !important;
+        color: #8b949e !important; /* Gri Etiket */
+        font-size: 14px !important;
     }
+
+    /* Tablo Özelleştirme */
+    .stDataFrame { border: 1px solid #30363d; border-radius: 5px; }
     
-    /* Sidebar Logo */
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #0d1117;
+        border-right: 1px solid #30363d;
+    }
     .sidebar-logo {
-        color: #1c54b2;
+        color: #4da6ff;
+        font-size: 26px;
         font-weight: 900;
-        font-size: 28px;
         margin-bottom: 5px;
     }
-    .sidebar-sub {color: #555; font-size: 13px; margin-bottom: 20px;}
+    .sidebar-sub { color: #8b949e; font-size: 12px; margin-bottom: 30px; }
+    
+    /* Buton */
+    div.stButton > button {
+        background: linear-gradient(90deg, #1c54b2 0%, #0d3c85 100%);
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        font-weight: bold;
+        width: 100%;
+        border-radius: 8px;
+        transition: all 0.3s ease;
+    }
+    div.stButton > button:hover {
+        transform: scale(1.02);
+        box-shadow: 0 0 15px rgba(28, 84, 178, 0.5);
+    }
+    
+    /* Hata/Bilgi Mesajları */
+    .stAlert { background-color: #161b22; color: #e6edf3; border: 1px solid #30363d; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- BAŞLIK ---
-st.markdown("<h1 style='text-align: center;'>LCW HOME - FİYAT ARAŞTIRMASI</h1>", unsafe_allow_html=True)
-st.markdown("<hr style='margin: 5px 0 20px 0;'>", unsafe_allow_html=True)
+st.markdown("<h1>LCW HOME | GLOBAL INTELLIGENCE</h1>", unsafe_allow_html=True)
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.markdown('<div class="sidebar-logo">LCW HOME</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sidebar-sub">FİYAT ARAŞTIRMASI</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-sub">COMPETITOR PRICE TRACKER</div>', unsafe_allow_html=True)
 
     PERPLEXITY_KEY = os.environ.get("PERPLEXITY_API_KEY")
     if not PERPLEXITY_KEY:
-        PERPLEXITY_KEY = st.text_input("🔑 API Anahtarı", type="password")
-    
+        PERPLEXITY_KEY = st.text_input("🔑 Perplexity API Key", type="password")
+
     if not PERPLEXITY_KEY:
-        st.warning("API Key giriniz.")
+        st.warning("⚠️ API Key Gerekli")
         st.stop()
 
 # --- VERİ SETLERİ ---
@@ -90,6 +127,7 @@ BRANDS = ["LC Waikiki", "Sinsay", "Pepco", "Zara Home", "H&M Home", "Jysk", "Pri
 
 @st.cache_data(ttl=3600)
 def get_rates():
+    """Kurları çeker (Base: TRY)"""
     try:
         r = requests.get("https://api.exchangerate-api.com/v4/latest/TRY").json()['rates']
         rates = {k: 1/v for k, v in r.items() if v > 0} 
@@ -105,133 +143,148 @@ def translate_text(text, target_lang):
     except:
         return text
 
-def clean_price_string(price_raw):
-    """
-    Karmaşık fiyat metinlerini (Örn: '12,99 лв', '1.200 RSD') temizler ve float yapar.
-    """
-    if isinstance(price_raw, (int, float)):
-        return float(price_raw)
+def clean_price(price_raw):
+    """Agresif Fiyat Temizleyici"""
+    if not price_raw: return 0.0
+    s = str(price_raw).lower().replace("лв", "").replace("lei", "").replace("eur", "").replace("rsd", "").strip()
     
-    # Sadece sayıları, noktayı ve virgülü bırak
-    text = str(price_raw)
-    clean = re.sub(r'[^\d.,]', '', text)
+    # Sadece rakam, nokta ve virgül kalsın
+    s = re.sub(r'[^\d.,]', '', s)
+    if not s: return 0.0
     
-    if not clean: return 0.0
-    
-    # Virgül/Nokta kargaşasını çözme (Avrupa vs ABD formatı)
-    # Eğer hem nokta hem virgül varsa: sondaki ondalıktır.
-    if ',' in clean and '.' in clean:
-        if clean.find(',') > clean.find('.'): # 1.200,50
-            clean = clean.replace('.', '').replace(',', '.')
-        else: # 1,200.50
-            clean = clean.replace(',', '')
-    elif ',' in clean:
-        # Sadece virgül varsa ve virgülden sonra 2 basamak varsa ondalıktır (genelde)
-        clean = clean.replace(',', '.')
-    
+    # Avrupa formatı (1.200,50) -> (1200.50)
+    if ',' in s and '.' in s:
+        if s.find(',') > s.find('.'): # 1.000,00
+            s = s.replace('.', '').replace(',', '.')
+        else: # 1,000.00
+            s = s.replace(',', '')
+    elif ',' in s:
+        if len(s.split(',')[-1]) == 2: # 12,50
+            s = s.replace(',', '.')
+        else: # 1,200 -> 1200 (Riskli ama genelde doğru)
+            s = s.replace(',', '.')
+            
     try:
-        return float(clean)
+        return float(s)
     except:
         return 0.0
 
-def search_with_perplexity(brand, product_local, country, currency_code):
+def search_sonar(brand, product_local, country, currency_code):
+    """
+    SADECE SONAR MODELİ KULLANILIR.
+    Render mantığını simüle etmek için "Specific Site Search" komutu verilir.
+    """
     url = "https://api.perplexity.ai/chat/completions"
     
-    # PROMPT GÜNCELLEMESİ: Fiyat konusunda daha ısrarcı
-    system_prompt = "You are a data extraction bot. You ONLY output JSON."
-    user_prompt = f"""
-    Search for "{brand}" "{product_local}" in {country}.
+    # PROMPT: Modelin 'Researcher' kimliğine bürünmesini sağlıyoruz.
+    system_msg = "You are an advanced eCommerce scraper. You extract strictly structured JSON data from search results."
     
-    TASKS:
-    1. Find 5-10 products currently available on the official website or major local retailers.
-    2. EXTRACT PRICE CAREFULLY. If the price is "5,50 лв", output 5.50. If "1.200 RSD", output 1200.
-    3. IGNORE items with NO price.
+    user_msg = f"""
+    Perform a targeted search for "{brand}" products in category "{product_local}" for the country "{country}".
     
-    OUTPUT JSON FORMAT:
+    INSTRUCTIONS (IMPORTANT):
+    1. Search specifically on the official "{brand}" website for {country} (e.g., pepco.bg, sinsay.com/rs).
+    2. If official site fails, look at catalog aggregators (like kimbino, catalog.bg) which list current prices.
+    3. EXTRACT 5-10 PRODUCTS.
+    4. Price MUST be a number. If you see "5,99 лв", output 5.99.
+    5. IGNORE items with no price.
+    
+    OUTPUT JSON FORMAT (STRICT):
     {{
         "products": [
-            {{ 
-                "name": "Local Product Name", 
-                "price": 10.99, 
-                "url": "Product URL" 
+            {{
+                "name": "Product Name",
+                "price": 10.99,
+                "url": "Product Link"
             }}
         ]
     }}
     """
     
     payload = {
-        "model": "sonar-pro",
+        "model": "sonar", # İSTENİLEN MODEL (PRO YOK!)
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg}
         ],
-        "temperature": 0.1
+        "temperature": 0.1, # Kesinlik için düşük
+        "max_tokens": 1000  # Yeterli alan
     }
-    headers = { "Authorization": f"Bearer {PERPLEXITY_KEY}", "Content-Type": "application/json" }
+    
+    headers = {
+        "Authorization": f"Bearer {PERPLEXITY_KEY}",
+        "Content-Type": "application/json"
+    }
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
-        if response.status_code == 200:
-            clean = response.json()['choices'][0]['message']['content'].replace("```json", "").replace("```", "").strip()
+        res = requests.post(url, json=payload, headers=headers)
+        if res.status_code == 200:
+            raw = res.json()['choices'][0]['message']['content']
+            # JSON Temizliği
+            clean = raw.replace("```json", "").replace("```", "").strip()
+            # Bazen başında/sonunda yazı olabilir, sadece { ... } arasını al
+            start = clean.find('{')
+            end = clean.rfind('}') + 1
+            if start != -1 and end != -1:
+                clean = clean[start:end]
             return json.loads(clean)
-        return None
-    except:
+        else:
+            st.error(f"Sonar Bağlantı Hatası: {res.status_code}")
+            return None
+    except Exception as e:
         return None
 
-# --- YAN MENÜ ---
+# --- SIDEBAR FİLTRELERİ ---
 with st.sidebar:
     st.header("🔎 Filtreler")
     sel_country = st.selectbox("Ülke", list(COUNTRIES.keys()))
     sel_brand = st.selectbox("Marka", BRANDS)
     q_tr = st.text_input("Ürün (TR)", "Çift Kişilik Nevresim")
+    
     st.markdown("---")
-    btn_analyze = st.button("Fiyatları Getir 🚀", type="primary", use_container_width=True)
+    btn_start = st.button("FİYATLARI ÇEK (SONAR) 🚀")
 
-# --- CANLI KUR GÖSTERGESİ (SOL ALT - DÜZELTİLDİ) ---
+# --- KURLAR ---
 rates = get_rates()
 conf = COUNTRIES[sel_country]
-curr_code = conf["curr"]
+curr = conf["curr"]
 
 if rates:
     usd_val = rates.get("USD", 0)
-    local_val = rates.get(curr_code, 0)
-    
+    loc_val = rates.get(curr, 0)
     with st.sidebar:
-        st.markdown("### 💰 Güncel Kurlar")
+        st.markdown("### 💱 Canlı Kurlar")
         c1, c2 = st.columns(2)
-        c1.metric("USD/TRY", f"{usd_val:.2f} ₺")
-        if curr_code != "TRY":
-            c2.metric(f"{curr_code}/TRY", f"{local_val:.2f} ₺")
-        else:
-            c2.metric("TRY", "1.00")
+        c1.metric("USD", f"{usd_val:.2f}₺")
+        c2.metric(curr, f"{loc_val:.2f}₺")
 
-# --- ANA EKRAN ---
-if btn_analyze:
-    if not rates: st.error("Kur bağlantısı yok."); st.stop()
+# --- ANA AKIŞ ---
+if btn_start:
+    if not rates: st.error("Kur verisi yok."); st.stop()
     
     # 1. Çeviri
     q_local = translate_text(q_tr, conf["lang"])
     
-    with st.spinner(f"🌍 {sel_country} ({q_local}) taranıyor..."):
-        data = search_with_perplexity(sel_brand, q_local, sel_country, curr_code)
-        
+    # 2. Sonar Araması
+    with st.spinner(f"🧿 Sonar (Standart) '{sel_brand}' sitesini tarıyor: {q_local} ..."):
+        data = search_sonar(sel_brand, q_local, sel_country, curr)
+    
     if data and "products" in data:
-        table_rows = []
+        rows = []
         prices_tl = []
         
         usd_rate = rates.get("USD", 1)
-        local_rate = rates.get(curr_code, 1)
+        loc_rate = rates.get(curr, 1)
         
         for p in data["products"]:
-            # FİYAT PARSE (GÜÇLENDİRİLMİŞ)
-            p_raw = clean_price_string(p.get("price", 0))
+            p_raw = clean_price(p.get("price", 0))
             
             if p_raw > 0:
-                p_tl = p_raw * local_rate
+                p_tl = p_raw * loc_rate
                 p_usd = p_tl / usd_rate
-                
                 prices_tl.append(p_tl)
-                table_rows.append({
+                
+                rows.append({
                     "Ürün Yerel Adı": p.get("name"),
                     "Ürün Türkçe Adı": q_tr,
                     "Yerel Fiyat": p_raw,
@@ -240,30 +293,28 @@ if btn_analyze:
                     "Link": p.get("url")
                 })
         
-        if table_rows:
-            df = pd.DataFrame(table_rows)
+        if rows:
+            df = pd.DataFrame(rows)
             
             # --- KPI ---
-            count = len(df)
-            avg_tl = sum(prices_tl) / count
-            min_tl = min(prices_tl)
-            max_tl = max(prices_tl)
+            cnt = len(df)
+            avg = sum(prices_tl) / cnt
+            mn = min(prices_tl)
+            mx = max(prices_tl)
             
-            def fmt_price(tl_val):
-                usd_val = tl_val / usd_rate
-                loc_val = tl_val / local_rate
-                return f"{tl_val:,.0f} ₺\n(${usd_val:,.1f})\n({loc_val:,.1f} {curr_code})"
+            def fmt(val):
+                return f"{val:,.0f}₺\n(${val/usd_rate:,.1f})\n({val/loc_rate:,.1f} {curr})"
 
-            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-            kpi1.metric("Bulunan", f"{count} Adet")
-            kpi2.metric("Ortalama", "Ort.", delta=None)
-            kpi2.markdown(f"<div style='text-align:center; font-weight:bold; color:#333; white-space: pre-line;'>{fmt_price(avg_tl)}</div>", unsafe_allow_html=True)
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Bulunan", f"{cnt} Adet")
+            k2.metric("Ortalama", "Ort.", delta_color="off")
+            k2.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(avg)}</div>", unsafe_allow_html=True)
             
-            kpi3.metric("En Düşük", "Min", delta=None)
-            kpi3.markdown(f"<div style='text-align:center; font-weight:bold; color:#333; white-space: pre-line;'>{fmt_price(min_tl)}</div>", unsafe_allow_html=True)
+            k3.metric("En Düşük", "Min", delta_color="off")
+            k3.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(mn)}</div>", unsafe_allow_html=True)
             
-            kpi4.metric("En Yüksek", "Max", delta=None)
-            kpi4.markdown(f"<div style='text-align:center; font-weight:bold; color:#333; white-space: pre-line;'>{fmt_price(max_tl)}</div>", unsafe_allow_html=True)
+            k4.metric("En Yüksek", "Max", delta_color="off")
+            k4.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(mx)}</div>", unsafe_allow_html=True)
             
             st.markdown("---")
             
@@ -271,26 +322,22 @@ if btn_analyze:
             st.dataframe(
                 df,
                 column_config={
-                    "Link": st.column_config.LinkColumn("Link", display_text="Ürüne Git 🔗"),
-                    "Yerel Fiyat": st.column_config.NumberColumn(f"Fiyat ({curr_code})", format="%.2f"),
+                    "Link": st.column_config.LinkColumn("Link", display_text="🔗 Ürüne Git"),
+                    "Yerel Fiyat": st.column_config.NumberColumn(f"Fiyat ({curr})", format="%.2f"),
                     "USD": st.column_config.NumberColumn("USD ($)", format="$%.2f"),
-                    "TL": st.column_config.NumberColumn("TL (₺)", format="%.2f ₺"),
+                    "TL": st.column_config.NumberColumn("TL (₺)", format="%.2f ₺")
                 },
-                hide_index=True,
-                use_container_width=True
+                use_container_width=True,
+                hide_index=True
             )
             
             # --- EXCEL ---
             csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(
-                label="💾 Excel Olarak İndir",
-                data=csv,
-                file_name=f'lcw_analiz_{sel_brand}_{sel_country}.csv',
-                mime='text/csv',
-            )
+            st.download_button("💾 Excel İndir", csv, f"lcw_sonar_{sel_brand}.csv", "text/csv")
             
         else:
-            st.warning("Ürünler bulundu ancak fiyatlar '0' olarak döndü. Site fiyatı gizliyor olabilir.")
-            st.json(data) # Debug için ham veriyi gösterelim
+            st.warning("Ürün bulundu ama fiyatlar okunamadı (0 geldi).")
+            # Debug:
+            # st.write(data)
     else:
-        st.error("Sonuç bulunamadı.")
+        st.error("Sonar sonuç bulamadı. Daha genel bir ürün adı deneyin.")
