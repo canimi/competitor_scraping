@@ -12,17 +12,37 @@ import requests
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="LCW Home Global", layout="wide", page_icon="🏠")
 
-# --- ENV KONTROLÜ (GOOGLE API) ---
-API_KEY = os.environ.get("GOOGLE_API_KEY")
+# --- YAN MENÜ (LCW STİLİ) ---
+st.sidebar.markdown(
+    """
+    <div style="padding: 15px; background-color: #f0f2f6; border-left: 5px solid #1c54b2; border-radius: 4px; margin-bottom: 20px;">
+        <h1 style='color: #1c54b2; font-weight: 900; margin:0; padding:0; font-family: "Segoe UI", sans-serif; font-size: 24px;'>LCW HOME</h1>
+        <p style='color: #555; font-size: 11px; margin:0; letter-spacing: 1px;'>GLOBAL PRICE INTELLIGENCE</p>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
+
+# --- API KEY KONTROLÜ ---
+SYSTEM_KEY = os.environ.get("GOOGLE_API_KEY")
+
+if SYSTEM_KEY:
+    API_KEY = SYSTEM_KEY
+else:
+    st.sidebar.warning("⚠️ API Anahtarı Bulunamadı")
+    API_KEY = st.sidebar.text_input("Google API Key Giriniz:", type="password", help="AI Studio'dan aldığınız key")
 
 if not API_KEY:
-    st.error("🚨 HATA: Google API Anahtarı bulunamadı!")
-    st.info("Lütfen Streamlit Secrets kısmına GOOGLE_API_KEY ekleyin.")
+    st.error("🚨 HATA: Çalışmak için Google API Anahtarı gereklidir.")
+    st.info("Ya Streamlit Secrets kısmına ekleyin ya da sol menüden girin.")
     st.stop()
 
-# Google Gemini Kurulumu
-genai.configure(api_key=API_KEY)
-MODEL_NAME = "gemini-1.5-flash"
+# --- GOOGLE MODEL KURULUMU (GÜVENLİ MOD) ---
+try:
+    genai.configure(api_key=API_KEY)
+except Exception as e:
+    st.error(f"API Key Hatalı: {e}")
+    st.stop()
 
 # --- SABİTLER ---
 COUNTRIES = {
@@ -63,17 +83,6 @@ def fetch_live_rates():
         return None, None
 
 LIVE_RATES, RATE_DATE = fetch_live_rates()
-
-# --- YAN MENÜ (MAVİ GERİ DÖNDÜ) ---
-st.sidebar.markdown(
-    """
-    <div style="padding: 15px; background-color: #f0f2f6; border-left: 5px solid #1c54b2; border-radius: 4px; margin-bottom: 20px;">
-        <h1 style='color: #1c54b2; font-weight: 900; margin:0; padding:0; font-family: "Segoe UI", sans-serif; font-size: 24px;'>LCW HOME</h1>
-        <p style='color: #555; font-size: 11px; margin:0; letter-spacing: 1px;'>GLOBAL PRICE INTELLIGENCE</p>
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
 
 st.sidebar.header("🔎 Filtreler")
 selected_country = st.sidebar.selectbox("Ülke", list(COUNTRIES.keys()))
@@ -129,16 +138,14 @@ def translate_result_to_tr(text):
     except:
         return text
 
-# --- ARAMA MOTORU (ENGEL AŞMA MODU) ---
+# --- ARAMA MOTORU ---
 def search_and_process_with_google(brand, country, translated_query, currency_hint):
     country_info = COUNTRIES.get(country, {})
     region_code = country_info.get("region", "wt-wt")
     
-    # 1. Geniş Arama Sorgusu
     search_query = f"{brand} {country} {translated_query} price"
         
     try:
-        # Backend='html' ile engelleri aşıyoruz
         with DDGS() as ddgs:
             results = list(ddgs.text(
                 search_query, 
@@ -148,17 +155,15 @@ def search_and_process_with_google(brand, country, translated_query, currency_hi
             ))
         
         if not results:
-            return None
+            return None, "Arama Sonucu Bulunamadı"
             
         search_context = ""
         for res in results:
             search_context += f"Title: {res['title']}\nLink: {res['href']}\nSnippet: {res['body']}\n---\n"
             
     except Exception as e:
-        st.error(f"Arama Hatası: {e}")
-        return None
+        return None, f"Arama Hatası: {e}"
 
-    # 2. Gemini Analizi
     prompt = f"""
     You are a shopping assistant.
     Search Context:
@@ -176,13 +181,21 @@ def search_and_process_with_google(brand, country, translated_query, currency_hi
     {{ "products": [ {{ "name": "...", "price": "...", "url": "..." }} ] }}
     """
     
+    # MODEL SEÇİCİ (FLASH ÇALIŞMAZSA PRO DEVREYE GİRER)
     try:
-        model = genai.GenerativeModel(MODEL_NAME)
+        model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-        return json.loads(response.text)
-    except Exception as e:
-        st.error(f"AI Hatası: {e}")
-        return None
+        return json.loads(response.text), None
+    except Exception:
+        # Flash hata verirse Pro'yu dene
+        try:
+            model = genai.GenerativeModel("gemini-pro")
+            response = model.generate_content(prompt)
+            # Gemini Pro bazen JSON tagleri ekler, temizleyelim
+            clean_text = response.text.replace("```json", "").replace("```", "").strip()
+            return json.loads(clean_text), None
+        except Exception as e2:
+            return None, f"AI Modeli Hatası: {e2}"
 
 # --- ANA EKRAN ---
 
@@ -194,15 +207,19 @@ if st.sidebar.button("Analizi Başlat 🚀", type="primary"):
     if not query_turkish:
         st.warning("Lütfen ürün adı giriniz.")
     else:
-        with st.status("Google sistemi taranıyor...", expanded=True) as status:
+        with st.status("Veriler taranıyor...", expanded=True) as status:
             lang_map = {"Türkiye":"tr", "Bulgaristan":"bg", "Yunanistan":"el", "Bosna Hersek":"bs", "Sırbistan":"sr", "İngiltere":"en", "Almanya":"de", "Romanya":"ro", "Rusya":"ru"}
             target_lang = lang_map.get(selected_country, "en")
             
             translated_query = translate_query_text(query_turkish, target_lang)
-            st.write(f"🔍 Arama Sorgusu: **{translated_query}**")
+            st.write(f"🔍 Arama: **{translated_query}**")
             
             target_currency = COUNTRIES[selected_country]["curr"]
-            result = search_and_process_with_google(selected_brand, selected_country, translated_query, target_currency)
+            result, error_msg = search_and_process_with_google(selected_brand, selected_country, translated_query, target_currency)
+            
+            if error_msg:
+                st.error(error_msg)
+            
             status.update(label="İşlem Tamamlandı", state="complete")
 
         if result and "products" in result and result["products"]:
