@@ -12,7 +12,7 @@ st.set_page_config(page_title="LCW Global Intelligence", layout="wide", page_ico
 # --- CSS: DARK MODE, NEON VE OKUNABİLİRLİK ---
 st.markdown("""
 <style>
-    /* Genel Arka Plan ve Fontlar */
+    /* Genel Arka Plan */
     .stApp {
         background-color: #0e1117;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -28,7 +28,7 @@ st.markdown("""
         margin-bottom: 20px !important;
     }
 
-    /* KPI Kartları (Siyah Zemin, Beyaz Yazı) */
+    /* KPI Kartları */
     div[data-testid="stMetric"] {
         background-color: #161b22;
         border: 1px solid #30363d;
@@ -37,20 +37,18 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.5);
     }
     [data-testid="stMetricValue"] {
-        color: #ffffff !important; /* BEYAZ RAKAMLAR */
+        color: #ffffff !important;
         font-size: 28px !important;
         font-weight: 700 !important;
         text-shadow: 0 0 10px rgba(255,255,255,0.2);
     }
     [data-testid="stMetricLabel"] {
-        color: #8b949e !important; /* Gri Etiket */
+        color: #8b949e !important;
         font-size: 14px !important;
     }
 
-    /* Tablo Özelleştirme */
+    /* Tablo ve Sidebar */
     .stDataFrame { border: 1px solid #30363d; border-radius: 5px; }
-    
-    /* Sidebar */
     [data-testid="stSidebar"] {
         background-color: #0d1117;
         border-right: 1px solid #30363d;
@@ -78,9 +76,6 @@ st.markdown("""
         transform: scale(1.02);
         box-shadow: 0 0 15px rgba(28, 84, 178, 0.5);
     }
-    
-    /* Hata/Bilgi Mesajları */
-    .stAlert { background-color: #161b22; color: #e6edf3; border: 1px solid #30363d; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -136,102 +131,92 @@ def get_rates():
     except:
         return None
 
-def translate_text(text, target_lang):
+def translate_to_local(text, target_lang):
+    """Arama terimini yerel dile çevirir"""
     if target_lang == 'tr': return text
     try:
         return GoogleTranslator(source='auto', target=target_lang).translate(text)
     except:
         return text
 
+def translate_to_turkish(text):
+    """Bulunan ürün ismini Türkçe'ye çevirir (Tablo için)"""
+    try:
+        return GoogleTranslator(source='auto', target='tr').translate(text)
+    except:
+        return text
+
 def clean_price(price_raw):
-    """Agresif Fiyat Temizleyici"""
     if not price_raw: return 0.0
     s = str(price_raw).lower().replace("лв", "").replace("lei", "").replace("eur", "").replace("rsd", "").strip()
-    
-    # Sadece rakam, nokta ve virgül kalsın
     s = re.sub(r'[^\d.,]', '', s)
     if not s: return 0.0
     
-    # Avrupa formatı (1.200,50) -> (1200.50)
     if ',' in s and '.' in s:
-        if s.find(',') > s.find('.'): # 1.000,00
-            s = s.replace('.', '').replace(',', '.')
-        else: # 1,000.00
-            s = s.replace(',', '')
+        if s.find(',') > s.find('.'): s = s.replace('.', '').replace(',', '.')
+        else: s = s.replace(',', '')
     elif ',' in s:
-        if len(s.split(',')[-1]) == 2: # 12,50
-            s = s.replace(',', '.')
-        else: # 1,200 -> 1200 (Riskli ama genelde doğru)
-            s = s.replace(',', '.')
+        if len(s.split(',')[-1]) == 2: s = s.replace(',', '.')
+        else: s = s.replace(',', '.')
             
-    try:
-        return float(s)
-    except:
-        return 0.0
+    try: return float(s)
+    except: return 0.0
 
 def search_sonar(brand, product_local, country, currency_code):
-    """
-    SADECE SONAR MODELİ KULLANILIR.
-    Render mantığını simüle etmek için "Specific Site Search" komutu verilir.
-    """
     url = "https://api.perplexity.ai/chat/completions"
     
-    # PROMPT: Modelin 'Researcher' kimliğine bürünmesini sağlıyoruz.
-    system_msg = "You are an advanced eCommerce scraper. You extract strictly structured JSON data from search results."
+    system_msg = "You are an advanced eCommerce scraper. You extract strictly structured JSON data."
     
+    # --- KRİTİK DEĞİŞİKLİK: PROMPT SIKI YÖNETİMİ ---
     user_msg = f"""
     Perform a targeted search for "{brand}" products in category "{product_local}" for the country "{country}".
     
-    INSTRUCTIONS (IMPORTANT):
-    1. Search specifically on the official "{brand}" website for {country} (e.g., pepco.bg, sinsay.com/rs).
-    2. If official site fails, look at catalog aggregators (like kimbino, catalog.bg) which list current prices.
-    3. EXTRACT 5-10 PRODUCTS.
-    4. Price MUST be a number. If you see "5,99 лв", output 5.99.
-    5. IGNORE items with no price.
+    STRICT RULES (READ CAREFULLY):
+    1. Search ONLY on the OFFICIAL website of "{brand}" for {country} (e.g., sinsay.com/gr, pepco.bg, zarahome.com/rs).
+    2. DO NOT use third-party catalogs, aggregators, or price comparison sites (like Glami, Kimbino, Akakce, Catalog.bg).
+    3. If the brand does NOT have an official e-commerce site or active catalog in {country}, RETURN AN EMPTY LIST.
     
-    OUTPUT JSON FORMAT (STRICT):
+    DATA EXTRACTION:
+    - Extract 5-10 specific products.
+    - Price MUST be a number.
+    - Provide the ORIGINAL local product name.
+    
+    OUTPUT JSON FORMAT:
     {{
         "products": [
             {{
-                "name": "Product Name",
+                "name": "Local Product Name",
                 "price": 10.99,
-                "url": "Product Link"
+                "url": "Official Product Link"
             }}
         ]
     }}
     """
     
     payload = {
-        "model": "sonar", # İSTENİLEN MODEL (PRO YOK!)
+        "model": "sonar",
         "messages": [
             {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg}
         ],
-        "temperature": 0.1, # Kesinlik için düşük
-        "max_tokens": 1000  # Yeterli alan
+        "temperature": 0.1,
+        "max_tokens": 1000
     }
     
-    headers = {
-        "Authorization": f"Bearer {PERPLEXITY_KEY}",
-        "Content-Type": "application/json"
-    }
+    headers = { "Authorization": f"Bearer {PERPLEXITY_KEY}", "Content-Type": "application/json" }
     
     try:
         res = requests.post(url, json=payload, headers=headers)
         if res.status_code == 200:
             raw = res.json()['choices'][0]['message']['content']
-            # JSON Temizliği
             clean = raw.replace("```json", "").replace("```", "").strip()
-            # Bazen başında/sonunda yazı olabilir, sadece { ... } arasını al
             start = clean.find('{')
             end = clean.rfind('}') + 1
-            if start != -1 and end != -1:
-                clean = clean[start:end]
+            if start != -1 and end != -1: clean = clean[start:end]
             return json.loads(clean)
         else:
-            st.error(f"Sonar Bağlantı Hatası: {res.status_code}")
             return None
-    except Exception as e:
+    except:
         return None
 
 # --- SIDEBAR FİLTRELERİ ---
@@ -262,21 +247,24 @@ if rates:
 if btn_start:
     if not rates: st.error("Kur verisi yok."); st.stop()
     
-    # 1. Çeviri
-    q_local = translate_text(q_tr, conf["lang"])
+    # 1. Çeviri (TR -> Yerel)
+    q_local = translate_to_local(q_tr, conf["lang"])
     
     # 2. Sonar Araması
-    with st.spinner(f"🧿 Sonar (Standart) '{sel_brand}' sitesini tarıyor: {q_local} ..."):
+    with st.spinner(f"🧿 {sel_brand} resmi sitesi taranıyor ({sel_country})..."):
         data = search_sonar(sel_brand, q_local, sel_country, curr)
     
-    if data and "products" in data:
+    if data and "products" in data and len(data["products"]) > 0:
         rows = []
         prices_tl = []
-        
         usd_rate = rates.get("USD", 1)
         loc_rate = rates.get(curr, 1)
         
-        for p in data["products"]:
+        # --- PROGRESS BAR EKLENDİ (Çeviri biraz sürebilir) ---
+        progress_bar = st.progress(0, text="Ürünler tercüme ediliyor...")
+        total_products = len(data["products"])
+        
+        for i, p in enumerate(data["products"]):
             p_raw = clean_price(p.get("price", 0))
             
             if p_raw > 0:
@@ -284,14 +272,23 @@ if btn_start:
                 p_usd = p_tl / usd_rate
                 prices_tl.append(p_tl)
                 
+                # --- YENİ EKLENEN KISIM: SATIR SATIR TERCÜME ---
+                local_name = p.get("name", "")
+                translated_name = translate_to_turkish(local_name) # Gerçek çeviri yapılıyor
+                
                 rows.append({
-                    "Ürün Yerel Adı": p.get("name"),
-                    "Ürün Türkçe Adı": q_tr,
+                    "Ürün Yerel Adı": local_name,
+                    "Ürün Türkçe Adı": translated_name, # Artık "Yüz Havlusu" değil, çevirisi gelecek
                     "Yerel Fiyat": p_raw,
                     "USD": p_usd,
                     "TL": p_tl,
                     "Link": p.get("url")
                 })
+            
+            # Barı güncelle
+            progress_bar.progress((i + 1) / total_products)
+            
+        progress_bar.empty() # İş bitince barı kaldır
         
         if rows:
             df = pd.DataFrame(rows)
@@ -309,10 +306,8 @@ if btn_start:
             k1.metric("Bulunan", f"{cnt} Adet")
             k2.metric("Ortalama", "Ort.", delta_color="off")
             k2.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(avg)}</div>", unsafe_allow_html=True)
-            
             k3.metric("En Düşük", "Min", delta_color="off")
             k3.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(mn)}</div>", unsafe_allow_html=True)
-            
             k4.metric("En Yüksek", "Max", delta_color="off")
             k4.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(mx)}</div>", unsafe_allow_html=True)
             
@@ -336,8 +331,9 @@ if btn_start:
             st.download_button("💾 Excel İndir", csv, f"lcw_sonar_{sel_brand}.csv", "text/csv")
             
         else:
-            st.warning("Ürün bulundu ama fiyatlar okunamadı (0 geldi).")
-            # Debug:
-            # st.write(data)
+            st.warning("Ürün bulundu ancak fiyatlar 0 veya geçersiz.")
+            
     else:
-        st.error("Sonar sonuç bulamadı. Daha genel bir ürün adı deneyin.")
+        # --- HATA MESAJI GÜNCELLENDİ ---
+        st.error(f"⚠️ {sel_brand} markasının {sel_country} ülkesinde resmi online satış sitesi bulunamadı veya erişilemedi.")
+        st.info("Not: Sistem sadece resmi sitelerde arama yapacak şekilde kısıtlanmıştır (Glami, Kimbino vb. engellendi).")
