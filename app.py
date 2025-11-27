@@ -9,23 +9,31 @@ from deep_translator import GoogleTranslator
 # --- SAYFA YAPILANDIRMASI ---
 st.set_page_config(page_title="LCW Global Intelligence", layout="wide", page_icon="🧿")
 
-# --- CSS: DARK MODE, NEON VE OKUNABİLİRLİK ---
+# --- CSS: BAŞLIK YUKARI + DARK MODE ---
 st.markdown("""
 <style>
+    /* 1. BAŞLIĞI ZORLA YUKARI ÇEKME OPERASYONU */
+    .block-container {
+        padding-top: 1rem !important; /* Üst boşluğu yok et */
+        padding-bottom: 5rem;
+    }
+    header {visibility: hidden;} /* Streamlit menüsünü gizle (opsiyonel) */
+    
     /* Genel Arka Plan */
     .stApp {
         background-color: #0e1117;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
     
-    /* Başlık */
+    /* Başlık Stili */
     h1 {
         color: #4da6ff;
         text-align: center;
         text-transform: uppercase;
         letter-spacing: 2px;
         text-shadow: 0 0 15px rgba(77, 166, 255, 0.6);
-        margin-bottom: 20px !important;
+        margin-top: -20px !important; /* Negatif margin ile yukarı yapıştır */
+        padding-bottom: 20px;
     }
 
     /* KPI Kartları */
@@ -40,7 +48,6 @@ st.markdown("""
         color: #ffffff !important;
         font-size: 28px !important;
         font-weight: 700 !important;
-        text-shadow: 0 0 10px rgba(255,255,255,0.2);
     }
     [data-testid="stMetricLabel"] {
         color: #8b949e !important;
@@ -53,13 +60,6 @@ st.markdown("""
         background-color: #0d1117;
         border-right: 1px solid #30363d;
     }
-    .sidebar-logo {
-        color: #4da6ff;
-        font-size: 26px;
-        font-weight: 900;
-        margin-bottom: 5px;
-    }
-    .sidebar-sub { color: #8b949e; font-size: 12px; margin-bottom: 30px; }
     
     /* Buton */
     div.stButton > button {
@@ -70,22 +70,17 @@ st.markdown("""
         font-weight: bold;
         width: 100%;
         border-radius: 8px;
-        transition: all 0.3s ease;
-    }
-    div.stButton > button:hover {
-        transform: scale(1.02);
-        box-shadow: 0 0 15px rgba(28, 84, 178, 0.5);
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- BAŞLIK ---
+# --- BAŞLIK (ARTIK EN TEPEDE) ---
 st.markdown("<h1>LCW HOME | GLOBAL INTELLIGENCE</h1>", unsafe_allow_html=True)
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.markdown('<div class="sidebar-logo">LCW HOME</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sidebar-sub">COMPETITOR PRICE TRACKER</div>', unsafe_allow_html=True)
+    st.markdown('<h2 style="color:#4da6ff; margin-bottom:0;">LCW HOME</h2>', unsafe_allow_html=True)
+    st.markdown('<p style="color:#8b949e; font-size:12px;">COMPETITOR PRICE TRACKER</p>', unsafe_allow_html=True)
 
     PERPLEXITY_KEY = os.environ.get("PERPLEXITY_API_KEY")
     if not PERPLEXITY_KEY:
@@ -98,11 +93,11 @@ with st.sidebar:
 # --- VERİ SETLERİ ---
 COUNTRIES = {
     "Bulgaristan":  {"curr": "BGN", "lang": "bg"},
+    "Bosna Hersek": {"curr": "BAM", "lang": "bs"}, # Pepco Burada Sorunluydu
     "Yunanistan":   {"curr": "EUR", "lang": "el"},
     "Kazakistan":   {"curr": "KZT", "lang": "kk"},
     "Rusya":        {"curr": "RUB", "lang": "ru"},
     "Ukrayna":      {"curr": "UAH", "lang": "uk"},
-    "Bosna Hersek": {"curr": "BAM", "lang": "bs"},
     "Sırbistan":    {"curr": "RSD", "lang": "sr"},
     "Montenegro":   {"curr": "EUR", "lang": "sr"},
     "Arnavutluk":   {"curr": "ALL", "lang": "sq"},
@@ -122,7 +117,6 @@ BRANDS = ["LC Waikiki", "Sinsay", "Pepco", "Zara Home", "H&M Home", "Jysk", "Pri
 
 @st.cache_data(ttl=3600)
 def get_rates():
-    """Kurları çeker (Base: TRY)"""
     try:
         r = requests.get("https://api.exchangerate-api.com/v4/latest/TRY").json()['rates']
         rates = {k: 1/v for k, v in r.items() if v > 0} 
@@ -132,7 +126,6 @@ def get_rates():
         return None
 
 def translate_to_local(text, target_lang):
-    """Arama terimini yerel dile çevirir"""
     if target_lang == 'tr': return text
     try:
         return GoogleTranslator(source='auto', target=target_lang).translate(text)
@@ -140,7 +133,6 @@ def translate_to_local(text, target_lang):
         return text
 
 def translate_to_turkish(text):
-    """Bulunan ürün ismini Türkçe'ye çevirir (Tablo için)"""
     try:
         return GoogleTranslator(source='auto', target='tr').translate(text)
     except:
@@ -148,7 +140,7 @@ def translate_to_turkish(text):
 
 def clean_price(price_raw):
     if not price_raw: return 0.0
-    s = str(price_raw).lower().replace("лв", "").replace("lei", "").replace("eur", "").replace("rsd", "").strip()
+    s = str(price_raw).lower().replace("лв", "").replace("lei", "").replace("eur", "").replace("rsd", "").replace("km", "").strip()
     s = re.sub(r'[^\d.,]', '', s)
     if not s: return 0.0
     
@@ -167,14 +159,16 @@ def search_sonar(brand, product_local, country, currency_code):
     
     system_msg = "You are an advanced eCommerce scraper. You extract strictly structured JSON data."
     
-    # --- KRİTİK DEĞİŞİKLİK: PROMPT SIKI YÖNETİMİ ---
+    # --- GÜNCELLENEN PROMPT (PEPCO BOSNA/BULGARİSTAN İÇİN DÜZELTME) ---
     user_msg = f"""
     Perform a targeted search for "{brand}" products in category "{product_local}" for the country "{country}".
     
-    STRICT RULES (READ CAREFULLY):
-    1. Search ONLY on the OFFICIAL website of "{brand}" for {country} (e.g., sinsay.com/gr, pepco.bg, zarahome.com/rs).
-    2. DO NOT use third-party catalogs, aggregators, or price comparison sites (like Glami, Kimbino, Akakce, Catalog.bg).
-    3. If the brand does NOT have an official e-commerce site or active catalog in {country}, RETURN AN EMPTY LIST.
+    STRICT RULES:
+    1. Search ONLY on the OFFICIAL website/domain of "{brand}" for {country} (e.g., pepco.ba, pepco.bg, sinsay.com).
+    2. **CRITICAL FOR PEPCO/SINSAY:** If the brand does not have a "Buy Now" webshop, you MUST check their OFFICIAL CATALOG/OFFER pages on their official domain.
+       - Example: For Pepco Bosnia (pepco.ba), extract prices from the displayed products in the categories section.
+    3. DO NOT use 3rd party aggregators (No Glami, No Kimbino, No Akakce).
+    4. If absolutely NO official site exists in {country}, return an empty list.
     
     DATA EXTRACTION:
     - Extract 5-10 specific products.
@@ -184,11 +178,7 @@ def search_sonar(brand, product_local, country, currency_code):
     OUTPUT JSON FORMAT:
     {{
         "products": [
-            {{
-                "name": "Local Product Name",
-                "price": 10.99,
-                "url": "Official Product Link"
-            }}
+            {{ "name": "Local Product Name", "price": 10.99, "url": "Official URL" }}
         ]
     }}
     """
@@ -247,7 +237,7 @@ if rates:
 if btn_start:
     if not rates: st.error("Kur verisi yok."); st.stop()
     
-    # 1. Çeviri (TR -> Yerel)
+    # 1. Çeviri
     q_local = translate_to_local(q_tr, conf["lang"])
     
     # 2. Sonar Araması
@@ -260,7 +250,6 @@ if btn_start:
         usd_rate = rates.get("USD", 1)
         loc_rate = rates.get(curr, 1)
         
-        # --- PROGRESS BAR EKLENDİ (Çeviri biraz sürebilir) ---
         progress_bar = st.progress(0, text="Ürünler tercüme ediliyor...")
         total_products = len(data["products"])
         
@@ -272,28 +261,24 @@ if btn_start:
                 p_usd = p_tl / usd_rate
                 prices_tl.append(p_tl)
                 
-                # --- YENİ EKLENEN KISIM: SATIR SATIR TERCÜME ---
                 local_name = p.get("name", "")
-                translated_name = translate_to_turkish(local_name) # Gerçek çeviri yapılıyor
+                translated_name = translate_to_turkish(local_name)
                 
                 rows.append({
                     "Ürün Yerel Adı": local_name,
-                    "Ürün Türkçe Adı": translated_name, # Artık "Yüz Havlusu" değil, çevirisi gelecek
+                    "Ürün Türkçe Adı": translated_name,
                     "Yerel Fiyat": p_raw,
                     "USD": p_usd,
                     "TL": p_tl,
                     "Link": p.get("url")
                 })
-            
-            # Barı güncelle
             progress_bar.progress((i + 1) / total_products)
-            
-        progress_bar.empty() # İş bitince barı kaldır
+        progress_bar.empty()
         
         if rows:
             df = pd.DataFrame(rows)
             
-            # --- KPI ---
+            # KPI
             cnt = len(df)
             avg = sum(prices_tl) / cnt
             mn = min(prices_tl)
@@ -313,7 +298,7 @@ if btn_start:
             
             st.markdown("---")
             
-            # --- TABLO ---
+            # Tablo
             st.dataframe(
                 df,
                 column_config={
@@ -326,14 +311,12 @@ if btn_start:
                 hide_index=True
             )
             
-            # --- EXCEL ---
+            # Excel
             csv = df.to_csv(index=False).encode('utf-8-sig')
             st.download_button("💾 Excel İndir", csv, f"lcw_sonar_{sel_brand}.csv", "text/csv")
             
         else:
-            st.warning("Ürün bulundu ancak fiyatlar 0 veya geçersiz.")
-            
+            st.warning("Ürün bulundu ancak fiyatlar okunamadı.")
     else:
-        # --- HATA MESAJI GÜNCELLENDİ ---
-        st.error(f"⚠️ {sel_brand} markasının {sel_country} ülkesinde resmi online satış sitesi bulunamadı veya erişilemedi.")
-        st.info("Not: Sistem sadece resmi sitelerde arama yapacak şekilde kısıtlanmıştır (Glami, Kimbino vb. engellendi).")
+        st.error(f"⚠️ {sel_brand} markasının {sel_country} ülkesinde erişilebilir resmi bir e-ticaret sitesi veya online kataloğu bulunamadı.")
+        st.info("İpucu: Markanın o ülkede web sitesi olmayabilir veya Sonar erişemiyor olabilir.")
