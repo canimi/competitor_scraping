@@ -90,6 +90,8 @@ def translate_logic(text, mode="to_local", target_lang="en"):
     try:
         if mode == "to_local":
             return GoogleTranslator(source='auto', target=target_lang).translate(text)
+        elif mode == "to_english":
+             return GoogleTranslator(source='auto', target='en').translate(text)
         else:
             return GoogleTranslator(source='auto', target='tr').translate(text)
     except: return text
@@ -109,46 +111,51 @@ def clean_price(price_raw):
     except: return 0.0
 
 def validate_image_url(url, base_url):
-    """
-    Resim linki yoksa placeholder koyar, yarım linkse tamamlar.
-    """
     if not url or str(url).lower() == "none" or str(url) == "":
-        return "https://cdn-icons-png.flaticon.com/512/1178/1178479.png" # Placeholder
+        return "https://cdn-icons-png.flaticon.com/512/1178/1178479.png"
     
     if not url.startswith("http"):
-        # Base URL'den domaini alıp birleştir (örn: /uploads/img.jpg -> https://pepco.rs/uploads/img.jpg)
         from urllib.parse import urljoin
         return urljoin(base_url, url)
-        
     return url
 
-def search_sonar(brand, product_local, country, currency_code, hardcoded_url):
+def search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url):
+    """
+    BU FONKSİYON ARTIK 'SITE:' OPERATÖRÜ KULLANARAK ARAMA YAPAR.
+    Böylece 'bazen bulup bazen bulamama' sorunu ortadan kalkar.
+    """
     url = "https://api.perplexity.ai/chat/completions"
     
-    system_msg = "You are a specialized e-commerce scraper. You output ONLY JSON."
+    # Domaini ayıkla (örn: https://www.zarahome.com/ba/ -> www.zarahome.com/ba/)
+    # Bu sayede arama motoru sadece o siteye odaklanır.
+    domain_query = hardcoded_url.replace("https://", "").replace("http://", "").strip("/")
     
-    # --- RESİM İÇİN GÜÇLENDİRİLMİŞ PROMPT ---
+    system_msg = "You are a precise search engine bot. Output strictly JSON."
+    
+    # --- KARARLILIK İÇİN YENİ PROMPT ---
+    # AI'a "site:domain ürün" araması yaptırıyoruz. Bu en kesin yöntemdir.
     user_msg = f"""
-    TASK: Extract prices for "{brand}" products in category "{product_local}" in {country}.
-    TARGET URL (OFFICIAL): {hardcoded_url}
+    ACTION: Perform a strictly targeted search using the 'site:' operator.
+    
+    SEARCH QUERIES TO EXECUTE:
+    1. site:{domain_query} "{product_local}"
+    2. site:{domain_query} "{product_english}"
     
     INSTRUCTIONS:
-    1. GO DIRECTLY TO THE TARGET URL.
-    2. FIND PRODUCTS: Look for products in the catalog or shop section.
-    3. EXTRACT DATA STRICTLY:
-       - Name: Original local name.
-       - Price: Numeric value.
-       - URL: Product detail page link.
-       - **IMAGE:** Find the direct link to the product image (src attribute ending in jpg, png, webp).
+    - You MUST search within the specific domain provided above.
+    - Look for product listing pages or product detail pages matching the keywords.
+    - If it's a Catalog/Brochure site (Pepco/Jumbo), extract valid product offers from the search snippets.
+    - Extract 5 products.
+    - **IMAGE IS MANDATORY:** Find the image URL (src ending in jpg/png/webp).
     
     OUTPUT JSON:
     {{
         "products": [
             {{ 
-                "name": "Local Name", 
+                "name": "Local Product Name", 
                 "price": 10.99, 
-                "url": "Product URL", 
-                "image": "https://example.com/image.jpg" 
+                "url": "https://...", 
+                "image": "https://..." 
             }}
         ]
     }}
@@ -157,7 +164,7 @@ def search_sonar(brand, product_local, country, currency_code, hardcoded_url):
     payload = {
         "model": "sonar",
         "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        "temperature": 0.1,
+        "temperature": 0.1, # En düşük yaratıcılık = En yüksek tutarlılık
         "max_tokens": 1000
     }
     
@@ -207,10 +214,14 @@ if btn_start:
         st.session_state['search_results'] = None
     else:
         st.success(f"🎯 Hedef Site: {target_url}")
-        q_local = translate_logic(q_tr, "to_local", conf["lang"])
         
-        with st.spinner(f"🧿 {sel_brand} taranıyor..."):
-            data = search_sonar(sel_brand, q_local, sel_country, curr, target_url)
+        # Hem Yerel Dil hem İngilizceye çeviriyoruz (Garanti olsun diye)
+        q_local = translate_logic(q_tr, "to_local", conf["lang"])
+        q_english = translate_logic(q_tr, "to_english")
+        
+        with st.spinner(f"🧿 {sel_brand} üzerinde '{q_local}' ve '{q_english}' aranıyor..."):
+            # Yeni fonksiyona her iki dili de gönderiyoruz
+            data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
         
         if data and "products" in data and len(data["products"]) > 0:
             rows = []
@@ -231,7 +242,6 @@ if btn_start:
                     loc_name = p.get("name", "")
                     tr_name = translate_logic(loc_name, "to_turkish")
                     
-                    # Görsel Linkini Düzenle (Yoksa Placeholder)
                     raw_img = p.get("image", "")
                     final_img = validate_image_url(raw_img, target_url)
                     
@@ -254,10 +264,10 @@ if btn_start:
                     "usd_rate": usd_rate, "loc_rate": loc_rate, "curr": curr
                 }
             else:
-                st.warning("Fiyatlar okunamadı.")
+                st.warning(f"{sel_brand} sitesinde fiyat formatı okunamadı.")
                 st.session_state['search_results'] = None
         else:
-            st.error("Ürün bulunamadı.")
+            st.error(f"⚠️ Ürün bulunamadı. '{q_local}' terimi {sel_brand} sitesinde sonuç vermedi.")
             st.session_state['search_results'] = None
 
 # --- RENDER ---
