@@ -1,4 +1,6 @@
 streamlit
 pandas
-requests
+google-generativeai
+duckduckgo-search
 deep-translator
+requests
