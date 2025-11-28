@@ -88,6 +88,9 @@ def get_rates():
     except: return None
 
 def translate_logic(text, mode="to_local", target_lang="en"):
+    """
+    Çeviri Motoru: 3 Farklı modda çalışır.
+    """
     try:
         if mode == "to_local":
             return GoogleTranslator(source='auto', target=target_lang).translate(text)
@@ -128,20 +131,18 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
     
     system_msg = "You are a specialized e-commerce scraper. You output ONLY JSON."
     
-    # --- PROMPT DÜZELTMESİ: ESNEKLİK SAĞLANDI ---
-    # TIRNAK İŞARETLERİ KALDIRILDI.
-    # ARTIK KELİME BAZLI ARAMA YAPARAK ÜRÜNÜ ISKALAMIYOR.
+    # --- DÜZELTİLEN PROMPT: İNGİLİZCE DESTEĞİ VE GENİŞ ARAMA ---
     user_msg = f"""
     ACTION: Targeted search using 'site:' operator on: {domain_query}
     
-    QUERIES:
+    QUERIES (Try multiple variations):
     1. site:{domain_query} {product_local}
     2. site:{domain_query} {product_english}
     
     INSTRUCTIONS:
-    - Search specifically within the domain.
-    - **FIND THE PRODUCT:** The exact name might be different (e.g. 'Bedding Set' instead of 'Double Duvet'). Find relevant items.
-    - **PEPCO/JUMBO NOTE:** If it's a catalog site, extract prices from the listing.
+    - Search specifically within {domain_query}.
+    - **LANGUAGE ISSUE:** The site might use Latin or Cyrillic script, or English product codes. Try both the local term and the English term.
+    - **FIND THE PRODUCT:** If exact match fails, find the category (e.g. for 'Duvet Cover', find 'Bedding' or 'Posteljina').
     - **QUANTITY:** Extract 10-15 products.
     - **PRICE:** Extract the raw number.
     
@@ -211,10 +212,11 @@ if btn_start:
     else:
         st.success(f"🎯 Hedef Site: {target_url}")
         
+        # Hem Yerel Dil hem İngilizceye çeviriyoruz (Garanti olsun diye)
         q_local = translate_logic(q_tr, "to_local", conf["lang"])
         q_english = translate_logic(q_tr, "to_english")
         
-        st.info(f"🔎 Aranıyor: {q_local} ({target_url})")
+        st.info(f"🔎 Aranıyor: **{q_local}** (Yerel) ve **{q_english}** (Global)")
         
         with st.spinner(f"🧿 {sel_brand} taranıyor..."):
             data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
@@ -264,7 +266,7 @@ if btn_start:
                 st.warning(f"{sel_brand} sitesinde fiyat formatı okunamadı.")
                 st.session_state['search_results'] = None
         else:
-            st.error(f"⚠️ Ürün bulunamadı. '{q_local}' terimiyle sonuç dönmedi.")
+            st.error(f"⚠️ Ürün bulunamadı. '{q_local}' veya '{q_english}' terimleri sonuç vermedi.")
             st.session_state['search_results'] = None
 
 # --- RENDER ---
