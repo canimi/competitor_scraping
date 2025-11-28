@@ -88,9 +88,6 @@ def get_rates():
     except: return None
 
 def translate_logic(text, mode="to_local", target_lang="en"):
-    """
-    Çeviri Motoru: 3 Farklı modda çalışır.
-    """
     try:
         if mode == "to_local":
             return GoogleTranslator(source='auto', target=target_lang).translate(text)
@@ -103,66 +100,76 @@ def translate_logic(text, mode="to_local", target_lang="en"):
 def clean_price(price_raw, currency_code="USD"):
     if not price_raw: return 0.0
     s = str(price_raw).lower()
-    for code in ["rsd", "din", "km", "bam", "лв", "bgn", "eur", "ron", "lei", "tl", "try", "huf", "ft"]:
+    
+    # Gereksiz kelimeleri temizle
+    for bad in ["from", "start", "to", "price", "fiyat", "only"]:
+        s = s.replace(bad, "")
+        
+    # Para birimlerini temizle
+    for code in ["rsd", "din", "km", "bam", "лв", "bgn", "eur", "ron", "lei", "tl", "try", "huf", "ft", "$", "€", "£"]:
         s = s.replace(code, "")
+    
     s = s.strip()
+    # Sadece sayı ve noktalama kalsın
     s = re.sub(r'[^\d.,]', '', s)
     if not s: return 0.0
     
-    thousands_separator_currencies = ["RSD", "HUF", "JPY", "KRW", "CLP", "VND", "IDR"]
-    
-    if currency_code in thousands_separator_currencies:
-        if '.' in s: s = s.replace('.', '')
-        s = s.replace(',', '.')
-    else:
+    # Karmaşık sayı formatlarını çözme
+    # Örn: 1.250,00 vs 1,250.00
+    try:
         if ',' in s and '.' in s:
-            if s.find(',') > s.find('.'): s = s.replace('.', '').replace(',', '.')
-            else: s = s.replace(',', '')
+            if s.rfind(',') > s.rfind('.'): # 1.250,00 formatı (Avrupa)
+                s = s.replace('.', '').replace(',', '.')
+            else: # 1,250.00 formatı (US)
+                s = s.replace(',', '')
         elif ',' in s:
+            # 12,50 veya 1,250
             if len(s.split(',')[-1]) == 2: s = s.replace(',', '.')
-            elif len(s.split(',')[-1]) == 3: s = s.replace(',', '')
-            else: s = s.replace(',', '.')
-    try: return float(s)
+            else: s = s.replace(',', '.') # Genelde Avrupa sitelerinde virgül kuruştur
+        
+        return float(s)
     except: return 0.0
 
 def search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url):
     url = "https://api.perplexity.ai/chat/completions"
-    domain_query = hardcoded_url.replace("https://", "").replace("http://", "").strip("/")
     
-    system_msg = "You are a specialized e-commerce scraper. You output ONLY JSON."
+    # URL'den domain temizle
+    domain = hardcoded_url.replace("https://", "").replace("http://", "").split("/")[0]
+
+    system_msg = """You are an advanced e-commerce scraper. 
+    Your goal is to find REAL product prices from the specified online store.
+    Always output strict JSON format."""
     
-    # --- DÜZELTİLEN PROMPT: İNGİLİZCE DESTEĞİ VE GENİŞ ARAMA ---
+    # --- DEĞİŞİKLİK BURADA: "site:" SORGUSUNU KALDIRDIK VE MANTIĞI DEĞİŞTİRDİK ---
     user_msg = f"""
-    ACTION: Targeted search using 'site:' operator on: {domain_query}
+    TASK: Find current prices for '{product_english}' (Local Name: {product_local}) at '{brand}' in '{country}'.
     
-    QUERIES (Try multiple variations):
-    1. site:{domain_query} {product_local}
-    2. site:{domain_query} {product_english}
+    TARGET WEBSITE: {hardcoded_url}
     
-    INSTRUCTIONS:
-    - Search specifically within {domain_query}.
-    - **LANGUAGE ISSUE:** The site might use Latin or Cyrillic script, or English product codes. Try both the local term and the English term.
-    - **FIND THE PRODUCT:** If exact match fails, find the category (e.g. for 'Duvet Cover', find 'Bedding' or 'Posteljina').
-    - **QUANTITY:** Extract 10-15 products.
-    - **PRICE:** Extract the raw number.
+    SEARCH STRATEGY:
+    1. Search broadly for "{brand} {country} {product_local} price".
+    2. Search for the specific Category Page on {domain} (e.g., "Bedding", "Duvet Covers").
+    3. Look for "online catalog" or "leaflet" if it's a discount store like Pepco.
     
-    OUTPUT JSON:
+    EXTRACTION RULES:
+    - Find at least 5 products.
+    - If specific exact matches aren't found, find the CLOSEST category (e.g., if looking for 'Duvet Cover', accept 'Bedding Sets' or 'Sheets').
+    - EXTRACT THE PRICE as a number.
+    
+    OUTPUT FORMAT (JSON ONLY):
     {{
         "products": [
-            {{ 
-                "name": "Local Product Name", 
-                "price": 10.99, 
-                "url": "https://..."
-            }}
+            {{ "name": "Product Name", "price": "10.99", "url": "url_found_or_category_url" }},
+            ...
         ]
     }}
     """
     
     payload = {
-        "model": "sonar",
+        "model": "sonar", # SADECE SONAR. Asla PRO değil.
         "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        "temperature": 0.1,
-        "max_tokens": 2000 
+        "temperature": 0.2, 
+        "max_tokens": 3000
     }
     
     headers = { "Authorization": f"Bearer {PERPLEXITY_KEY}", "Content-Type": "application/json" }
@@ -171,12 +178,21 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
         res = requests.post(url, json=payload, headers=headers)
         if res.status_code == 200:
             raw = res.json()['choices'][0]['message']['content']
+            # JSON Temizliği
             clean = raw.replace("```json", "").replace("```", "").strip()
-            if "{" in clean:
-                clean = clean[clean.find("{"):clean.rfind("}")+1]
+            # Bazen başında açıklama olabilir, ilk { ile son } arasını al
+            start = clean.find("{")
+            end = clean.rfind("}")
+            if start != -1 and end != -1:
+                clean = clean[start:end+1]
                 return json.loads(clean)
+            return None
+        else:
+            st.error(f"API Hatası: {res.status_code}")
+            return None
+    except Exception as e: 
+        st.error(f"Bağlantı Hatası: {e}")
         return None
-    except: return None
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -212,13 +228,13 @@ if btn_start:
     else:
         st.success(f"🎯 Hedef Site: {target_url}")
         
-        # Hem Yerel Dil hem İngilizceye çeviriyoruz (Garanti olsun diye)
+        # Dil Çevirileri
         q_local = translate_logic(q_tr, "to_local", conf["lang"])
         q_english = translate_logic(q_tr, "to_english")
         
         st.info(f"🔎 Aranıyor: **{q_local}** (Yerel) ve **{q_english}** (Global)")
         
-        with st.spinner(f"🧿 {sel_brand} taranıyor..."):
+        with st.spinner(f"🧿 {sel_brand} ({sel_country}) taranıyor... Bu işlem yapay zeka tarafından yorumlandığı için 10-20 sn sürebilir."):
             data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
         
         if data and "products" in data and len(data["products"]) > 0:
@@ -237,7 +253,7 @@ if btn_start:
                     p_usd = p_tl / usd_rate
                     prices_tl.append(p_tl)
                     
-                    loc_name = p.get("name", "")
+                    loc_name = p.get("name", "Bilinmiyor")
                     tr_name = translate_logic(loc_name, "to_turkish")
                     
                     rows.append({
@@ -263,10 +279,9 @@ if btn_start:
                     "usd_rate": usd_rate, "loc_rate": loc_rate, "curr": curr
                 }
             else:
-                st.warning(f"{sel_brand} sitesinde fiyat formatı okunamadı.")
-                st.session_state['search_results'] = None
+                st.warning(f"⚠️ {sel_brand} sitesinden fiyatlar sayısal olarak okunamadı. Gelen veri: {data}")
         else:
-            st.error(f"⚠️ Ürün bulunamadı. '{q_local}' veya '{q_english}' terimleri sonuç vermedi.")
+            st.error(f"⚠️ Ürün bulunamadı. Yapay zeka siteye erişemedi veya ürünleri listeleyemedi. Lütfen 'Nevresim' yerine daha genel 'Yatak Odası' gibi terimler deneyin.")
             st.session_state['search_results'] = None
 
 # --- RENDER ---
@@ -279,33 +294,34 @@ if st.session_state['search_results'] is not None:
     curr = res["curr"]
     
     cnt = len(df)
-    avg = sum(prices_tl) / cnt
-    mn = min(prices_tl)
-    mx = max(prices_tl)
-    def fmt(val): return f"{val:,.0f}₺\n(${val/usd_rate:,.1f})\n({val/loc_rate:,.1f} {curr})"
+    if cnt > 0:
+        avg = sum(prices_tl) / cnt
+        mn = min(prices_tl)
+        mx = max(prices_tl)
+        def fmt(val): return f"{val:,.0f}₺\n(${val/usd_rate:,.1f})\n({val/loc_rate:,.1f} {curr})"
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Bulunan", f"{cnt} Adet")
-    k2.metric("Ortalama", "Ort.", delta_color="off")
-    k2.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(avg)}</div>", unsafe_allow_html=True)
-    k3.metric("En Düşük", "Min", delta_color="off")
-    k3.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(mn)}</div>", unsafe_allow_html=True)
-    k4.metric("En Yüksek", "Max", delta_color="off")
-    k4.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(mx)}</div>", unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    st.dataframe(
-        df,
-        column_config={
-            "Link": st.column_config.LinkColumn("Link", display_text="🔗 Git"),
-            "Yerel Fiyat": st.column_config.NumberColumn(f"Fiyat ({curr})", format="%.2f"),
-            "USD": st.column_config.NumberColumn("USD ($)", format="$%.2f"),
-            "TL": st.column_config.NumberColumn("TL (₺)", format="%.2f ₺")
-        },
-        use_container_width=True,
-        hide_index=True
-    )
-    
-    csv = df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button("💾 Excel İndir", csv, "lcw_analiz.csv", "text/csv")
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Bulunan", f"{cnt} Adet")
+        k2.metric("Ortalama", "Ort.", delta_color="off")
+        k2.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(avg)}</div>", unsafe_allow_html=True)
+        k3.metric("En Düşük", "Min", delta_color="off")
+        k3.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(mn)}</div>", unsafe_allow_html=True)
+        k4.metric("En Yüksek", "Max", delta_color="off")
+        k4.markdown(f"<div style='text-align:center;color:white;font-weight:bold;margin-top:-20px;white-space:pre-wrap;'>{fmt(mx)}</div>", unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        st.dataframe(
+            df,
+            column_config={
+                "Link": st.column_config.LinkColumn("Link", display_text="🔗 Git"),
+                "Yerel Fiyat": st.column_config.NumberColumn(f"Fiyat ({curr})", format="%.2f"),
+                "USD": st.column_config.NumberColumn("USD ($)", format="$%.2f"),
+                "TL": st.column_config.NumberColumn("TL (₺)", format="%.2f ₺")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        csv = df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("💾 Excel İndir", csv, "lcw_analiz.csv", "text/csv")
