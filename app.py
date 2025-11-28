@@ -115,60 +115,57 @@ def clean_price(price_raw, currency_code="USD"):
     if not s: return 0.0
     
     # Karmaşık sayı formatlarını çözme
-    # Örn: 1.250,00 vs 1,250.00
     try:
         if ',' in s and '.' in s:
-            if s.rfind(',') > s.rfind('.'): # 1.250,00 formatı (Avrupa)
+            if s.rfind(',') > s.rfind('.'): # 1.250,00 formatı
                 s = s.replace('.', '').replace(',', '.')
-            else: # 1,250.00 formatı (US)
+            else: # 1,250.00 formatı
                 s = s.replace(',', '')
         elif ',' in s:
-            # 12,50 veya 1,250
             if len(s.split(',')[-1]) == 2: s = s.replace(',', '.')
-            else: s = s.replace(',', '.') # Genelde Avrupa sitelerinde virgül kuruştur
+            else: s = s.replace(',', '.')
         
         return float(s)
     except: return 0.0
 
 def search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url):
     url = "https://api.perplexity.ai/chat/completions"
-    
-    # URL'den domain temizle
     domain = hardcoded_url.replace("https://", "").replace("http://", "").split("/")[0]
 
-    system_msg = """You are an advanced e-commerce scraper. 
-    Your goal is to find REAL product prices from the specified online store.
-    Always output strict JSON format."""
+    system_msg = """You are a strict e-commerce data analyst. 
+    You output ONLY valid JSON. 
+    Your Highest Priority is RELEVANCE. Do not output mismatched products."""
     
-    # --- DEĞİŞİKLİK BURADA: "site:" SORGUSUNU KALDIRDIK VE MANTIĞI DEĞİŞTİRDİK ---
+    # --- YENİLENEN KATI PROMPT ---
     user_msg = f"""
-    TASK: Find current prices for '{product_english}' (Local Name: {product_local}) at '{brand}' in '{country}'.
+    TASK: Find EXACT matches for the product '{product_english}' (Local Name: {product_local}) at '{brand}' in '{country}'.
+    WEBSITE: {hardcoded_url}
     
-    TARGET WEBSITE: {hardcoded_url}
+    STRICT FILTERING RULES:
+    1. The product MUST be a '{product_english}'.
+    2. EXCLUDE unrelated accessories. 
+       - If looking for 'Duvet Cover', DO NOT include 'Pillow', 'Cushion', 'Sheet', 'Rug', or 'Blanket'.
+       - If looking for 'Towel', DO NOT include 'Bathrobe'.
+    3. If the item is a "Set", ensure the main component matches the search query.
     
-    SEARCH STRATEGY:
-    1. Search broadly for "{brand} {country} {product_local} price".
-    2. Search for the specific Category Page on {domain} (e.g., "Bedding", "Duvet Covers").
-    3. Look for "online catalog" or "leaflet" if it's a discount store like Pepco.
+    SEARCH STEPS:
+    1. Search for "{brand} {country} {product_local}".
+    2. Check the product titles. If a title contains words meaning "Pillow", "Case", "Sheet" but NOT "Duvet Cover", DISCARD IT.
     
-    EXTRACTION RULES:
-    - Find at least 5 products.
-    - If specific exact matches aren't found, find the CLOSEST category (e.g., if looking for 'Duvet Cover', accept 'Bedding Sets' or 'Sheets').
-    - EXTRACT THE PRICE as a number.
-    
-    OUTPUT FORMAT (JSON ONLY):
+    OUTPUT JSON ONLY:
     {{
         "products": [
-            {{ "name": "Product Name", "price": "10.99", "url": "url_found_or_category_url" }},
-            ...
+            {{ "name": "Exact Product Name", "price": "10.99", "url": "link" }}
         ]
     }}
+    
+    If no EXACT matches are found, return empty products list []. DO NOT guess.
     """
     
     payload = {
-        "model": "sonar", # SADECE SONAR. Asla PRO değil.
+        "model": "sonar",
         "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        "temperature": 0.2, 
+        "temperature": 0.1, # Daha da düşürdüm, yaratıcılık istemiyoruz.
         "max_tokens": 3000
     }
     
@@ -178,20 +175,16 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
         res = requests.post(url, json=payload, headers=headers)
         if res.status_code == 200:
             raw = res.json()['choices'][0]['message']['content']
-            # JSON Temizliği
             clean = raw.replace("```json", "").replace("```", "").strip()
-            # Bazen başında açıklama olabilir, ilk { ile son } arasını al
             start = clean.find("{")
             end = clean.rfind("}")
             if start != -1 and end != -1:
                 clean = clean[start:end+1]
                 return json.loads(clean)
             return None
-        else:
-            st.error(f"API Hatası: {res.status_code}")
-            return None
+        return None
     except Exception as e: 
-        st.error(f"Bağlantı Hatası: {e}")
+        st.error(f"Hata: {e}")
         return None
 
 # --- SIDEBAR ---
@@ -228,13 +221,12 @@ if btn_start:
     else:
         st.success(f"🎯 Hedef Site: {target_url}")
         
-        # Dil Çevirileri
         q_local = translate_logic(q_tr, "to_local", conf["lang"])
         q_english = translate_logic(q_tr, "to_english")
         
         st.info(f"🔎 Aranıyor: **{q_local}** (Yerel) ve **{q_english}** (Global)")
         
-        with st.spinner(f"🧿 {sel_brand} ({sel_country}) taranıyor... Bu işlem yapay zeka tarafından yorumlandığı için 10-20 sn sürebilir."):
+        with st.spinner(f"🧿 {sel_brand} üzerinde '{q_english}' aranıyor..."):
             data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
         
         if data and "products" in data and len(data["products"]) > 0:
@@ -279,9 +271,9 @@ if btn_start:
                     "usd_rate": usd_rate, "loc_rate": loc_rate, "curr": curr
                 }
             else:
-                st.warning(f"⚠️ {sel_brand} sitesinden fiyatlar sayısal olarak okunamadı. Gelen veri: {data}")
+                st.warning(f"⚠️ {sel_brand} sitesinde fiyat formatı okunamadı.")
         else:
-            st.error(f"⚠️ Ürün bulunamadı. Yapay zeka siteye erişemedi veya ürünleri listeleyemedi. Lütfen 'Nevresim' yerine daha genel 'Yatak Odası' gibi terimler deneyin.")
+            st.error(f"⚠️ Ürün bulunamadı. '{q_local}' için tam eşleşen ürün bulunamadı. Lütfen aramayı genelleştirin veya farklı bir ürün deneyin.")
             st.session_state['search_results'] = None
 
 # --- RENDER ---
