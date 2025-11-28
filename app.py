@@ -117,39 +117,47 @@ def clean_price(price_raw, currency_code="USD"):
         return float(s)
     except: return 0.0
 
+# --- PYTHON TARAFINDA DOĞRULAMA FONKSİYONU ---
+def validate_relevance(product_name_local, query_english):
+    """
+    Bu fonksiyon yapay zekaya güvenmez.
+    Ürün adını İngilizceye çevirir ve aranan kelime (Pillow, Towel vs)
+    içinde geçiyor mu diye Python ile kontrol eder.
+    """
+    try:
+        # Ürün adını İngilizceye çevir (Google Translate)
+        prod_en = GoogleTranslator(source='auto', target='en').translate(product_name_local).lower()
+        q_en = query_english.lower()
+        
+        # Anahtar kelimeleri ayır (Örn: "Throw Pillow" -> "throw", "pillow")
+        keywords = [k for k in q_en.split() if len(k) > 3] # 'of', 'in' gibi kısa kelimeleri at
+        
+        # Eğer anahtar kelimelerden HİÇBİRİ ürün adında yoksa REDDET.
+        # Örn: Aranan "Pillow", Ürün "White Towel". Eşleşme yok -> False
+        match = any(k in prod_en for k in keywords)
+        
+        return match, prod_en
+    except:
+        return True, product_name_local # Çeviri hatası olursa eleme yapma, şüpheli olarak kalsın
+
 def search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url):
     url = "https://api.perplexity.ai/chat/completions"
     domain = hardcoded_url.replace("https://", "").replace("http://", "").split("/")[0]
 
-    system_msg = """You are a SMART E-COMMERCE ASSISTANT.
-    Your job is to find products that MATCH THE USER'S INTENT, even if the keywords are slightly different.
-    Output ONLY JSON."""
+    system_msg = "You are a data extractor. Get raw product list. DO NOT FILTER strictly, allow my code to filter."
     
-    # --- DENGELENMİŞ PROMPT: Ne Çok Katı Ne Çok Gevşek ---
     user_msg = f"""
-    TASK: Find available products for '{product_english}' (Local Name: {product_local}) at '{brand}' in '{country}'.
-    WEBSITE: {hardcoded_url}
+    Search for '{product_english}' (Local: {product_local}) on {hardcoded_url}.
     
-    INTELLIGENT FILTERING (Apply this logic):
-    1. **Synonyms are Okay:** If user wants "Face Towel", a "Small Towel", "Hand Towel" or "Cotton Towel (50x90)" IS ACCEPTABLE. 
-    2. **Context Matters:** If user wants "Duvet Cover", "Bedding Set" is OKAY, but "Pillow" or "Sheet" is WRONG.
-    3. **Avoid Unrelated Items:**
-       - If searching for 'Towel', IGNORE 'Bath Mat', 'Rug'.
-       - If searching for 'Duvet Cover', IGNORE 'Pillowcase' (unless part of a set).
-    
-    SEARCH STRATEGY:
-    1. Search for "{brand} {country} {product_local} price".
-    2. Search for generic category "{brand} {country} home textile price".
-    3. Look for product lists.
+    Get me a list of products that MIGHT match. 
+    Include Name, Price, URL.
     
     OUTPUT JSON:
     {{
         "products": [
-            {{ "name": "Product Name Found", "price": "10.99", "url": "link" }}
+            {{ "name": "Local Product Name", "price": "10.99", "url": "link" }}
         ]
     }}
-    
-    Find at least 5 products. If exact specific model isn't found, return the closest valid alternative (e.g. generic Cotton Towel for Face Towel).
     """
     
     payload = {
@@ -173,9 +181,7 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
                 return json.loads(clean)
             return None
         return None
-    except Exception as e: 
-        st.error(f"Hata: {e}")
-        return None
+    except: return None
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -183,7 +189,7 @@ with st.sidebar:
     available_countries = list(URL_DB.keys())
     sel_country = st.selectbox("Ülke", available_countries)
     sel_brand = st.selectbox("Marka", BRANDS)
-    q_tr = st.text_input("Ürün (TR)", "Yüz Havlusu")
+    q_tr = st.text_input("Ürün (TR)", "Kırlent")
     st.markdown("---")
     btn_start = st.button("FİYATLARI ÇEK 🚀")
 
@@ -212,11 +218,11 @@ if btn_start:
         st.success(f"🎯 Hedef Site: {target_url}")
         
         q_local = translate_logic(q_tr, "to_local", conf["lang"])
-        q_english = translate_logic(q_tr, "to_english")
+        q_english = translate_logic(q_tr, "to_english") # Örn: "Throw Pillow"
         
         st.info(f"🔎 Aranıyor: **{q_local}** (Yerel) ve **{q_english}** (Global)")
         
-        with st.spinner(f"🧿 {sel_brand} taranıyor..."):
+        with st.spinner(f"🧿 {sel_brand} taranıyor ve analiz ediliyor..."):
             data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
         
         if data and "products" in data and len(data["products"]) > 0:
@@ -225,29 +231,39 @@ if btn_start:
             usd_rate = rates.get("USD", 1)
             loc_rate = rates.get(curr, 1)
             
-            pbar = st.progress(0, text="Veriler işleniyor...")
+            pbar = st.progress(0, text="Doğrulama yapılıyor...")
             tot = len(data["products"])
             
+            valid_count = 0
+            
             for i, p in enumerate(data["products"]):
-                p_raw = clean_price(p.get("price", 0), curr)
-                if p_raw > 0:
-                    p_tl = p_raw * loc_rate
-                    p_usd = p_tl / usd_rate
-                    prices_tl.append(p_tl)
-                    
-                    loc_name = p.get("name", "Bilinmiyor")
-                    tr_name = translate_logic(loc_name, "to_turkish")
-                    
-                    rows.append({
-                        "Marka": sel_brand,
-                        "Ülke": sel_country,
-                        "Ürün Yerel Adı": loc_name,
-                        "Ürün Türkçe Adı": tr_name,
-                        "Yerel Fiyat": p_raw,
-                        "USD": p_usd,
-                        "TL": p_tl,
-                        "Link": p.get("url")
-                    })
+                loc_name = p.get("name", "Bilinmiyor")
+                
+                # --- PYTHON FIREWALL (GÜVENLİK DUVARI) ---
+                # Burada ürünü kontrol ediyoruz. Eğer alakasızsa listeye eklemiyoruz.
+                is_valid, eng_name_check = validate_relevance(loc_name, q_english)
+                
+                if is_valid:
+                    p_raw = clean_price(p.get("price", 0), curr)
+                    if p_raw > 0:
+                        p_tl = p_raw * loc_rate
+                        p_usd = p_tl / usd_rate
+                        prices_tl.append(p_tl)
+                        
+                        tr_name = translate_logic(loc_name, "to_turkish")
+                        
+                        rows.append({
+                            "Marka": sel_brand,
+                            "Ülke": sel_country,
+                            "Ürün Yerel Adı": loc_name,
+                            "Ürün Türkçe Adı": tr_name,
+                            "Yerel Fiyat": p_raw,
+                            "USD": p_usd,
+                            "TL": p_tl,
+                            "Link": p.get("url")
+                        })
+                        valid_count += 1
+                
                 pbar.progress((i + 1) / tot)
             pbar.empty()
             
@@ -261,9 +277,10 @@ if btn_start:
                     "usd_rate": usd_rate, "loc_rate": loc_rate, "curr": curr
                 }
             else:
-                st.warning(f"⚠️ {sel_brand} sitesinde fiyat formatı okunamadı.")
+                st.error(f"⚠️ Yapay zeka bazı ürünler buldu ancak Python Güvenlik Duvarı bunların '{q_english}' ile eşleşmediğini tespit etti ve eledi. (Bulunanlar genelde Havlu/Çarşaf idi).")
+                st.session_state['search_results'] = None
         else:
-            st.error(f"⚠️ Sonuç bulunamadı. Lütfen ürün ismini biraz daha genel yazmayı deneyin (Örn: 'Yüz Havlusu' yerine 'Havlu').")
+            st.error(f"⚠️ Sonuç bulunamadı.")
             st.session_state['search_results'] = None
 
 # --- RENDER ---
