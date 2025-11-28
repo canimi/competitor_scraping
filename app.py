@@ -120,42 +120,54 @@ def clean_price(price_raw, currency_code="USD"):
 # --- PYTHON TARAFINDA DOĞRULAMA FONKSİYONU ---
 def validate_relevance(product_name_local, query_english):
     """
-    Bu fonksiyon yapay zekaya güvenmez.
-    Ürün adını İngilizceye çevirir ve aranan kelime (Pillow, Towel vs)
-    içinde geçiyor mu diye Python ile kontrol eder.
+    Ürün adını İngilizceye çevirir ve aranan ana kelimeyi kontrol eder.
+    Ancak "Face Towel" gibi spesifik sıfatlarda esnek davranır, "Towel" bulsa yeter.
     """
     try:
-        # Ürün adını İngilizceye çevir (Google Translate)
         prod_en = GoogleTranslator(source='auto', target='en').translate(product_name_local).lower()
         q_en = query_english.lower()
         
-        # Anahtar kelimeleri ayır (Örn: "Throw Pillow" -> "throw", "pillow")
-        keywords = [k for k in q_en.split() if len(k) > 3] # 'of', 'in' gibi kısa kelimeleri at
+        # Kelimeleri ayıkla
+        keywords = [k for k in q_en.split() if len(k) > 2] 
         
-        # Eğer anahtar kelimelerden HİÇBİRİ ürün adında yoksa REDDET.
-        # Örn: Aranan "Pillow", Ürün "White Towel". Eşleşme yok -> False
+        # Eğer "Face Towel" aranıyorsa, "Towel" bulunması bizim için yeterli kabul edilmeli (Listeyi şişirmek için).
+        # Ancak "Bedding" aranıyorsa "Pillow" kabul edilmemeli.
+        
+        # Ana obje analizi (Örn: Towel)
+        main_object = keywords[-1] if keywords else "" # Genelde sondaki kelime ana objedir (Face TOWEL, Bedding SET)
+        
+        if main_object in prod_en:
+            return True, prod_en
+        
+        # Yedek: Herhangi bir kelime eşleşmesi
         match = any(k in prod_en for k in keywords)
-        
         return match, prod_en
     except:
-        return True, product_name_local # Çeviri hatası olursa eleme yapma, şüpheli olarak kalsın
+        return True, product_name_local 
 
 def search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url):
     url = "https://api.perplexity.ai/chat/completions"
     domain = hardcoded_url.replace("https://", "").replace("http://", "").split("/")[0]
 
-    system_msg = "You are a data extractor. Get raw product list. DO NOT FILTER strictly, allow my code to filter."
+    system_msg = "You are a bulk data scraper. Your job is to EXTRACT LISTS of products, not just one item."
     
+    # --- YENİ PROMPT: KATALOG DÖKME ---
     user_msg = f"""
-    Search for '{product_english}' (Local: {product_local}) on {hardcoded_url}.
+    ACTION: Go to the '{product_english}' category on {hardcoded_url} (or search for '{product_local}').
     
-    Get me a list of products that MIGHT match. 
-    Include Name, Price, URL.
+    TASK: List AS MANY diverse products as possible found in that category.
+    - Don't stop at 1 result. I need a Price List.
+    - Look for different sizes (e.g., 50x90, 70x140, 30x50).
+    - Look for different colors/models.
+    
+    TARGET: At least 10-15 items.
     
     OUTPUT JSON:
     {{
         "products": [
-            {{ "name": "Local Product Name", "price": "10.99", "url": "link" }}
+            {{ "name": "Product Name 1", "price": "10.99", "url": "link" }},
+            {{ "name": "Product Name 2", "price": "12.99", "url": "link" }},
+            ...
         ]
     }}
     """
@@ -189,7 +201,7 @@ with st.sidebar:
     available_countries = list(URL_DB.keys())
     sel_country = st.selectbox("Ülke", available_countries)
     sel_brand = st.selectbox("Marka", BRANDS)
-    q_tr = st.text_input("Ürün (TR)", "Kırlent")
+    q_tr = st.text_input("Ürün (TR)", "Yüz Havlusu")
     st.markdown("---")
     btn_start = st.button("FİYATLARI ÇEK 🚀")
 
@@ -218,11 +230,11 @@ if btn_start:
         st.success(f"🎯 Hedef Site: {target_url}")
         
         q_local = translate_logic(q_tr, "to_local", conf["lang"])
-        q_english = translate_logic(q_tr, "to_english") # Örn: "Throw Pillow"
+        q_english = translate_logic(q_tr, "to_english")
         
-        st.info(f"🔎 Aranıyor: **{q_local}** (Yerel) ve **{q_english}** (Global)")
+        st.info(f"🔎 Aranıyor: **{q_local}** (Yerel) ve **{q_english}** (Global) kategorisi taranıyor...")
         
-        with st.spinner(f"🧿 {sel_brand} taranıyor ve analiz ediliyor..."):
+        with st.spinner(f"🧿 {sel_brand} mağazası taranıyor... En az 10 ürün çekilmeye çalışılıyor..."):
             data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
         
         if data and "products" in data and len(data["products"]) > 0:
@@ -239,8 +251,7 @@ if btn_start:
             for i, p in enumerate(data["products"]):
                 loc_name = p.get("name", "Bilinmiyor")
                 
-                # --- PYTHON FIREWALL (GÜVENLİK DUVARI) ---
-                # Burada ürünü kontrol ediyoruz. Eğer alakasızsa listeye eklemiyoruz.
+                # --- GÜVENLİK DUVARI ---
                 is_valid, eng_name_check = validate_relevance(loc_name, q_english)
                 
                 if is_valid:
@@ -277,7 +288,7 @@ if btn_start:
                     "usd_rate": usd_rate, "loc_rate": loc_rate, "curr": curr
                 }
             else:
-                st.error(f"⚠️ Yapay zeka bazı ürünler buldu ancak Python Güvenlik Duvarı bunların '{q_english}' ile eşleşmediğini tespit etti ve eledi. (Bulunanlar genelde Havlu/Çarşaf idi).")
+                st.error(f"⚠️ Yapay zeka ürün buldu ama Python filtresine takıldı. Aranan: '{q_english}'. Bulunanlar farklı kategoride olabilir.")
                 st.session_state['search_results'] = None
         else:
             st.error(f"⚠️ Sonuç bulunamadı.")
