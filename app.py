@@ -96,55 +96,49 @@ def translate_logic(text, mode="to_local", target_lang="en"):
             return GoogleTranslator(source='auto', target='tr').translate(text)
     except: return text
 
-def clean_price(price_raw):
+def clean_price(price_raw, currency_code="USD"):
     if not price_raw: return 0.0
-    s = str(price_raw).lower().replace("лв", "").replace("km", "").replace("rsd", "").replace("eur", "").strip()
+    s = str(price_raw).lower()
+    for code in ["rsd", "din", "km", "bam", "лв", "bgn", "eur", "ron", "lei", "tl", "try", "huf", "ft"]:
+        s = s.replace(code, "")
+    s = s.strip()
     s = re.sub(r'[^\d.,]', '', s)
     if not s: return 0.0
-    if ',' in s and '.' in s:
-        if s.find(',') > s.find('.'): s = s.replace('.', '').replace(',', '.')
-        else: s = s.replace(',', '')
-    elif ',' in s:
-        if len(s.split(',')[-1]) == 2: s = s.replace(',', '.')
-        else: s = s.replace(',', '.')
+    
+    thousands_separator_currencies = ["RSD", "HUF", "JPY", "KRW", "CLP", "VND", "IDR"]
+    
+    if currency_code in thousands_separator_currencies:
+        if '.' in s: s = s.replace('.', '')
+        s = s.replace(',', '.')
+    else:
+        if ',' in s and '.' in s:
+            if s.find(',') > s.find('.'): s = s.replace('.', '').replace(',', '.')
+            else: s = s.replace(',', '')
+        elif ',' in s:
+            if len(s.split(',')[-1]) == 2: s = s.replace(',', '.')
+            elif len(s.split(',')[-1]) == 3: s = s.replace(',', '')
+            else: s = s.replace(',', '.')
     try: return float(s)
     except: return 0.0
 
-def validate_image_url(url, base_url):
-    """
-    Resim linklerini doğrular ve onarır.
-    """
-    if not url or str(url).lower() == "none" or str(url) == "":
-        return "https://cdn-icons-png.flaticon.com/512/1178/1178479.png" # Boş resim ikonu
-    
-    # Göreceli linkleri (relative path) düzelt
-    if not url.startswith("http"):
-        from urllib.parse import urljoin
-        return urljoin(base_url, url)
-        
-    return url
-
 def search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url):
     url = "https://api.perplexity.ai/chat/completions"
-    
-    # Domaini ayıkla
     domain_query = hardcoded_url.replace("https://", "").replace("http://", "").strip("/")
     
     system_msg = "You are a specialized e-commerce scraper. You output ONLY JSON."
     
-    # --- GÜNCELLENEN PROMPT (LIMIT ARTIRILDI + RESİM ZORUNLU) ---
     user_msg = f"""
-    ACTION: Perform a targeted search using the 'site:' operator on: {domain_query}
+    ACTION: Targeted search using 'site:' operator on: {domain_query}
     
     QUERIES:
-    1. site:{domain_query} "{product_local}"
-    2. site:{domain_query} "{product_english}"
+    1. site:{domain_query} "{product_local}" price
+    2. site:{domain_query} "{product_english}" price
     
     INSTRUCTIONS:
-    - Search specifically within the domain.
-    - **QUANTITY:** Extract between 10 to 15 products if available.
-    - **IMAGES (MANDATORY):** You MUST extract the direct image URL (src) for each product. Look for 'og:image' meta tags or main product image tags.
-    - **PRICE:** Must be numeric.
+    - Search specifically within {domain_query}.
+    - **SINSAY/PEPCO SPECIFIC:** Look closely at search snippets. If you see "1.299 RSD", extract "1299".
+    - **QUANTITY:** Extract 10-15 products.
+    - **PRICE:** Extract the raw number.
     
     OUTPUT JSON:
     {{
@@ -152,14 +146,12 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
             {{ 
                 "name": "Local Product Name", 
                 "price": 10.99, 
-                "url": "https://product-link...", 
-                "image": "https://image-link.jpg" 
+                "url": "https://..."
             }}
         ]
     }}
     """
     
-    # Token limitini artırdık ki 15 ürün sığsın
     payload = {
         "model": "sonar",
         "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
@@ -217,7 +209,7 @@ if btn_start:
         q_local = translate_logic(q_tr, "to_local", conf["lang"])
         q_english = translate_logic(q_tr, "to_english")
         
-        with st.spinner(f"🧿 {sel_brand} taranıyor (Max 15 Ürün)..."):
+        with st.spinner(f"🧿 {sel_brand} taranıyor..."):
             data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
         
         if data and "products" in data and len(data["products"]) > 0:
@@ -230,7 +222,7 @@ if btn_start:
             tot = len(data["products"])
             
             for i, p in enumerate(data["products"]):
-                p_raw = clean_price(p.get("price", 0))
+                p_raw = clean_price(p.get("price", 0), curr)
                 if p_raw > 0:
                     p_tl = p_raw * loc_rate
                     p_usd = p_tl / usd_rate
@@ -239,11 +231,10 @@ if btn_start:
                     loc_name = p.get("name", "")
                     tr_name = translate_logic(loc_name, "to_turkish")
                     
-                    raw_img = p.get("image", "")
-                    final_img = validate_image_url(raw_img, target_url)
-                    
+                    # TABLO VERİSİ (Görsel çıkarıldı, Marka ve Ülke eklendi)
                     rows.append({
-                        "Görsel": final_img,
+                        "Marka": sel_brand,
+                        "Ülke": sel_country,
                         "Ürün Yerel Adı": loc_name,
                         "Ürün Türkçe Adı": tr_name,
                         "Yerel Fiyat": p_raw,
@@ -256,6 +247,10 @@ if btn_start:
             
             if rows:
                 df = pd.DataFrame(rows)
+                # Sütun sırasını düzenle
+                cols = ["Marka", "Ülke", "Ürün Yerel Adı", "Ürün Türkçe Adı", "Yerel Fiyat", "USD", "TL", "Link"]
+                df = df[cols]
+                
                 st.session_state['search_results'] = {
                     "df": df, "prices_tl": prices_tl, 
                     "usd_rate": usd_rate, "loc_rate": loc_rate, "curr": curr
@@ -264,7 +259,7 @@ if btn_start:
                 st.warning(f"{sel_brand} sitesinde fiyat formatı okunamadı.")
                 st.session_state['search_results'] = None
         else:
-            st.error(f"⚠️ Ürün bulunamadı. '{q_local}' terimi {sel_brand} sitesinde sonuç vermedi.")
+            st.error(f"⚠️ Ürün bulunamadı.")
             st.session_state['search_results'] = None
 
 # --- RENDER ---
@@ -296,15 +291,4 @@ if st.session_state['search_results'] is not None:
     st.dataframe(
         df,
         column_config={
-            "Görsel": st.column_config.ImageColumn("Görsel", help="Ürün Görseli"),
-            "Link": st.column_config.LinkColumn("Link", display_text="🔗 Git"),
-            "Yerel Fiyat": st.column_config.NumberColumn(f"Fiyat ({curr})", format="%.2f"),
-            "USD": st.column_config.NumberColumn("USD ($)", format="$%.2f"),
-            "TL": st.column_config.NumberColumn("TL (₺)", format="%.2f ₺")
-        },
-        use_container_width=True,
-        hide_index=True
-    )
-    
-    csv = df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button("💾 Excel İndir", csv, "lcw_analiz.csv", "text/csv")
+            "Link": st.column_config.LinkColumn("L
