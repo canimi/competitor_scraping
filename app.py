@@ -99,6 +99,7 @@ def translate_logic(text, mode="to_local", target_lang="en"):
 def clean_price(price_raw, currency_code="USD"):
     if not price_raw: return 0.0
     s = str(price_raw).lower()
+    # Para birimi sembollerini temizle
     for code in ["rsd", "din", "km", "bam", "лв", "bgn", "eur", "ron", "lei", "tl", "try", "huf", "ft"]:
         s = s.replace(code, "")
     s = s.strip()
@@ -125,20 +126,26 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
     url = "https://api.perplexity.ai/chat/completions"
     domain_query = hardcoded_url.replace("https://", "").replace("http://", "").strip("/")
     
-    system_msg = "You are a specialized e-commerce scraper. You output ONLY JSON."
+    system_msg = "You are a precise pricing bot. You output ONLY JSON."
     
+    # --- HALÜSİNASYON ENGELLEYİCİ PROMPT ---
+    # "Exactly", "Strictly", "Do not return similar items" komutları eklendi.
     user_msg = f"""
     ACTION: Targeted search using 'site:' operator on: {domain_query}
     
     QUERIES:
-    1. site:{domain_query} "{product_local}" price
-    2. site:{domain_query} "{product_english}" price
+    1. site:{domain_query} "{product_local}"
+    2. site:{domain_query} "{product_english}"
     
-    INSTRUCTIONS:
-    - Search specifically within {domain_query}.
-    - **SINSAY/PEPCO SPECIFIC:** Look closely at search snippets. If you see "1.299 RSD", extract "1299".
-    - **QUANTITY:** Extract 10-15 products.
-    - **PRICE:** Extract the raw number.
+    CRITICAL INSTRUCTIONS (READ CAREFULLY):
+    1. **STRICT MATCHING ONLY:** You must find products that MATCH the search query.
+       - If I search for "Face Towel", DO NOT return "Bath Towel" or "Hand Towel".
+       - If I search for "Duvet Cover", DO NOT return "Pillowcase".
+       - If the specific item is not found, RETURN AN EMPTY LIST. Do not try to be helpful by returning "similar" items.
+    
+    2. **REAL PRICES:** Extract the actual price from the page.
+    
+    3. **QUANTITY:** Up to 15 items, ONLY IF they match the query.
     
     OUTPUT JSON:
     {{
@@ -155,7 +162,7 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
     payload = {
         "model": "sonar",
         "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        "temperature": 0.1,
+        "temperature": 0.1, # En düşük yaratıcılık
         "max_tokens": 2000 
     }
     
@@ -209,6 +216,8 @@ if btn_start:
         q_local = translate_logic(q_tr, "to_local", conf["lang"])
         q_english = translate_logic(q_tr, "to_english")
         
+        st.info(f"🔎 Aranıyor: **{q_local}** (Strict Match)")
+        
         with st.spinner(f"🧿 {sel_brand} taranıyor..."):
             data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
         
@@ -231,7 +240,6 @@ if btn_start:
                     loc_name = p.get("name", "")
                     tr_name = translate_logic(loc_name, "to_turkish")
                     
-                    # TABLO VERİSİ (Görsel çıkarıldı, Marka ve Ülke eklendi)
                     rows.append({
                         "Marka": sel_brand,
                         "Ülke": sel_country,
@@ -247,7 +255,7 @@ if btn_start:
             
             if rows:
                 df = pd.DataFrame(rows)
-                # Sütun sırasını düzenle
+                # İstenen Kolon Sırası
                 cols = ["Marka", "Ülke", "Ürün Yerel Adı", "Ürün Türkçe Adı", "Yerel Fiyat", "USD", "TL", "Link"]
                 df = df[cols]
                 
@@ -256,10 +264,10 @@ if btn_start:
                     "usd_rate": usd_rate, "loc_rate": loc_rate, "curr": curr
                 }
             else:
-                st.warning(f"{sel_brand} sitesinde fiyat formatı okunamadı.")
+                st.warning(f"{sel_brand} sitesinde eşleşen ürünlerin fiyatı okunamadı.")
                 st.session_state['search_results'] = None
         else:
-            st.error(f"⚠️ Ürün bulunamadı.")
+            st.error(f"🚫 Sonuç Bulunamadı. '{q_local}' için tam eşleşme yok.")
             st.session_state['search_results'] = None
 
 # --- RENDER ---
