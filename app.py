@@ -100,31 +100,20 @@ def translate_logic(text, mode="to_local", target_lang="en"):
 def clean_price(price_raw, currency_code="USD"):
     if not price_raw: return 0.0
     s = str(price_raw).lower()
-    
-    # Gereksiz kelimeleri temizle
     for bad in ["from", "start", "to", "price", "fiyat", "only"]:
         s = s.replace(bad, "")
-        
-    # Para birimlerini temizle
     for code in ["rsd", "din", "km", "bam", "лв", "bgn", "eur", "ron", "lei", "tl", "try", "huf", "ft", "$", "€", "£"]:
         s = s.replace(code, "")
-    
     s = s.strip()
-    # Sadece sayı ve noktalama kalsın
     s = re.sub(r'[^\d.,]', '', s)
     if not s: return 0.0
-    
-    # Karmaşık sayı formatlarını çözme
     try:
         if ',' in s and '.' in s:
-            if s.rfind(',') > s.rfind('.'): # 1.250,00 formatı
-                s = s.replace('.', '').replace(',', '.')
-            else: # 1,250.00 formatı
-                s = s.replace(',', '')
+            if s.rfind(',') > s.rfind('.'): s = s.replace('.', '').replace(',', '.')
+            else: s = s.replace(',', '')
         elif ',' in s:
             if len(s.split(',')[-1]) == 2: s = s.replace(',', '.')
             else: s = s.replace(',', '.')
-        
         return float(s)
     except: return 0.0
 
@@ -132,40 +121,41 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
     url = "https://api.perplexity.ai/chat/completions"
     domain = hardcoded_url.replace("https://", "").replace("http://", "").split("/")[0]
 
-    system_msg = """You are a strict e-commerce data analyst. 
-    You output ONLY valid JSON. 
-    Your Highest Priority is RELEVANCE. Do not output mismatched products."""
+    system_msg = """You are a SMART E-COMMERCE ASSISTANT.
+    Your job is to find products that MATCH THE USER'S INTENT, even if the keywords are slightly different.
+    Output ONLY JSON."""
     
-    # --- YENİLENEN KATI PROMPT ---
+    # --- DENGELENMİŞ PROMPT: Ne Çok Katı Ne Çok Gevşek ---
     user_msg = f"""
-    TASK: Find EXACT matches for the product '{product_english}' (Local Name: {product_local}) at '{brand}' in '{country}'.
+    TASK: Find available products for '{product_english}' (Local Name: {product_local}) at '{brand}' in '{country}'.
     WEBSITE: {hardcoded_url}
     
-    STRICT FILTERING RULES:
-    1. The product MUST be a '{product_english}'.
-    2. EXCLUDE unrelated accessories. 
-       - If looking for 'Duvet Cover', DO NOT include 'Pillow', 'Cushion', 'Sheet', 'Rug', or 'Blanket'.
-       - If looking for 'Towel', DO NOT include 'Bathrobe'.
-    3. If the item is a "Set", ensure the main component matches the search query.
+    INTELLIGENT FILTERING (Apply this logic):
+    1. **Synonyms are Okay:** If user wants "Face Towel", a "Small Towel", "Hand Towel" or "Cotton Towel (50x90)" IS ACCEPTABLE. 
+    2. **Context Matters:** If user wants "Duvet Cover", "Bedding Set" is OKAY, but "Pillow" or "Sheet" is WRONG.
+    3. **Avoid Unrelated Items:**
+       - If searching for 'Towel', IGNORE 'Bath Mat', 'Rug'.
+       - If searching for 'Duvet Cover', IGNORE 'Pillowcase' (unless part of a set).
     
-    SEARCH STEPS:
-    1. Search for "{brand} {country} {product_local}".
-    2. Check the product titles. If a title contains words meaning "Pillow", "Case", "Sheet" but NOT "Duvet Cover", DISCARD IT.
+    SEARCH STRATEGY:
+    1. Search for "{brand} {country} {product_local} price".
+    2. Search for generic category "{brand} {country} home textile price".
+    3. Look for product lists.
     
-    OUTPUT JSON ONLY:
+    OUTPUT JSON:
     {{
         "products": [
-            {{ "name": "Exact Product Name", "price": "10.99", "url": "link" }}
+            {{ "name": "Product Name Found", "price": "10.99", "url": "link" }}
         ]
     }}
     
-    If no EXACT matches are found, return empty products list []. DO NOT guess.
+    Find at least 5 products. If exact specific model isn't found, return the closest valid alternative (e.g. generic Cotton Towel for Face Towel).
     """
     
     payload = {
         "model": "sonar",
         "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        "temperature": 0.1, # Daha da düşürdüm, yaratıcılık istemiyoruz.
+        "temperature": 0.1,
         "max_tokens": 3000
     }
     
@@ -193,7 +183,7 @@ with st.sidebar:
     available_countries = list(URL_DB.keys())
     sel_country = st.selectbox("Ülke", available_countries)
     sel_brand = st.selectbox("Marka", BRANDS)
-    q_tr = st.text_input("Ürün (TR)", "Çift Kişilik Nevresim")
+    q_tr = st.text_input("Ürün (TR)", "Yüz Havlusu")
     st.markdown("---")
     btn_start = st.button("FİYATLARI ÇEK 🚀")
 
@@ -226,7 +216,7 @@ if btn_start:
         
         st.info(f"🔎 Aranıyor: **{q_local}** (Yerel) ve **{q_english}** (Global)")
         
-        with st.spinner(f"🧿 {sel_brand} üzerinde '{q_english}' aranıyor..."):
+        with st.spinner(f"🧿 {sel_brand} taranıyor..."):
             data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
         
         if data and "products" in data and len(data["products"]) > 0:
@@ -273,7 +263,7 @@ if btn_start:
             else:
                 st.warning(f"⚠️ {sel_brand} sitesinde fiyat formatı okunamadı.")
         else:
-            st.error(f"⚠️ Ürün bulunamadı. '{q_local}' için tam eşleşen ürün bulunamadı. Lütfen aramayı genelleştirin veya farklı bir ürün deneyin.")
+            st.error(f"⚠️ Sonuç bulunamadı. Lütfen ürün ismini biraz daha genel yazmayı deneyin (Örn: 'Yüz Havlusu' yerine 'Havlu').")
             st.session_state['search_results'] = None
 
 # --- RENDER ---
