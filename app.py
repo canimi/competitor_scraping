@@ -96,55 +96,89 @@ def translate_logic(text, mode="to_local", target_lang="en"):
             return GoogleTranslator(source='auto', target='tr').translate(text)
     except: return text
 
-def clean_price(price_raw):
+def clean_price(price_raw, currency_code="USD"):
+    """
+    Sırbistan (RSD), Romanya (RON) vb. ülkeler için binlik ayracı düzeltmesi.
+    """
     if not price_raw: return 0.0
-    s = str(price_raw).lower().replace("лв", "").replace("km", "").replace("rsd", "").replace("eur", "").strip()
+    
+    # 1. Metinden sayı olmayanları temizle (Nokta ve virgül kalsın)
+    s = str(price_raw).lower()
+    # Para birimi kodlarını temizle
+    for code in ["rsd", "din", "km", "bam", "лв", "bgn", "eur", "ron", "lei", "tl", "try", "huf", "ft"]:
+        s = s.replace(code, "")
+    s = s.strip()
+    
+    # Sadece rakam, nokta, virgül
     s = re.sub(r'[^\d.,]', '', s)
     if not s: return 0.0
-    if ',' in s and '.' in s:
-        if s.find(',') > s.find('.'): s = s.replace('.', '').replace(',', '.')
-        else: s = s.replace(',', '')
-    elif ',' in s:
-        if len(s.split(',')[-1]) == 2: s = s.replace(',', '.')
-        else: s = s.replace(',', '.')
-    try: return float(s)
-    except: return 0.0
+    
+    # 2. Ülke Bazlı Mantık (CRITICAL FIX)
+    # RSD, HUF, KRW, JPY gibi para birimlerinde kuruş (decimal) genelde yoktur.
+    # 1.200 bu ülkelerde 1200 demektir.
+    thousands_separator_currencies = ["RSD", "HUF", "JPY", "KRW", "CLP", "VND", "IDR"]
+    
+    if currency_code in thousands_separator_currencies:
+        # Eğer içinde nokta varsa ve virgülden daha sağdaysa veya sadece nokta varsa -> Noktayı sil (Binlik ayıracıdır)
+        if '.' in s:
+             # Örn: 1.299 -> 1299
+             s = s.replace('.', '')
+        # Eğer virgül varsa, onu ondalık sanıp silebiliriz veya nokta yapabiliriz ama RSD'de genelde kuruş yazılmaz.
+        # Biz yine de virgülü nokta yapalım (1299,00 -> 1299.00)
+        s = s.replace(',', '.')
+        
+    else:
+        # Standart Avrupa/ABD mantığı
+        if ',' in s and '.' in s:
+            if s.find(',') > s.find('.'): # 1.200,50 (Avrupa)
+                s = s.replace('.', '').replace(',', '.')
+            else: # 1,200.50 (ABD)
+                s = s.replace(',', '')
+        elif ',' in s:
+            # Sadece virgül var. 12,99 -> 12.99
+            # Ama 1,200 -> 1200 olma ihtimali de var.
+            # Genelde e-ticarette ondalık kullanılır.
+            if len(s.split(',')[-1]) == 2: 
+                s = s.replace(',', '.')
+            elif len(s.split(',')[-1]) == 3: # 1,200 -> 1200
+                s = s.replace(',', '')
+            else:
+                s = s.replace(',', '.')
+
+    try: 
+        val = float(s)
+        return val
+    except: 
+        return 0.0
 
 def validate_image_url(url, base_url):
-    """
-    Resim linklerini doğrular ve onarır.
-    """
     if not url or str(url).lower() == "none" or str(url) == "":
-        return "https://cdn-icons-png.flaticon.com/512/1178/1178479.png" # Boş resim ikonu
-    
-    # Göreceli linkleri (relative path) düzelt
+        return "https://cdn-icons-png.flaticon.com/512/1178/1178479.png"
     if not url.startswith("http"):
         from urllib.parse import urljoin
         return urljoin(base_url, url)
-        
     return url
 
 def search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url):
     url = "https://api.perplexity.ai/chat/completions"
-    
-    # Domaini ayıkla
     domain_query = hardcoded_url.replace("https://", "").replace("http://", "").strip("/")
     
     system_msg = "You are a specialized e-commerce scraper. You output ONLY JSON."
     
-    # --- GÜNCELLENEN PROMPT (LIMIT ARTIRILDI + RESİM ZORUNLU) ---
+    # --- PROMPT: DAHA AGRESIF FİYAT OKUMA ---
     user_msg = f"""
-    ACTION: Perform a targeted search using the 'site:' operator on: {domain_query}
+    ACTION: Targeted search using 'site:' operator on: {domain_query}
     
     QUERIES:
-    1. site:{domain_query} "{product_local}"
-    2. site:{domain_query} "{product_english}"
+    1. site:{domain_query} "{product_local}" price
+    2. site:{domain_query} "{product_english}" price
     
     INSTRUCTIONS:
-    - Search specifically within the domain.
-    - **QUANTITY:** Extract between 10 to 15 products if available.
-    - **IMAGES (MANDATORY):** You MUST extract the direct image URL (src) for each product. Look for 'og:image' meta tags or main product image tags.
-    - **PRICE:** Must be numeric.
+    - Search specifically within {domain_query}.
+    - **SINSAY/PEPCO SPECIFIC:** Look closely at search snippets. If you see "1.299 RSD", extract "1299".
+    - **QUANTITY:** Extract 10-15 products.
+    - **IMAGES:** Mandatory. Look for 'src' in image tags.
+    - **PRICE:** Extract the raw number.
     
     OUTPUT JSON:
     {{
@@ -152,14 +186,13 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
             {{ 
                 "name": "Local Product Name", 
                 "price": 10.99, 
-                "url": "https://product-link...", 
-                "image": "https://image-link.jpg" 
+                "url": "https://...", 
+                "image": "https://..." 
             }}
         ]
     }}
     """
     
-    # Token limitini artırdık ki 15 ürün sığsın
     payload = {
         "model": "sonar",
         "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
@@ -217,7 +250,7 @@ if btn_start:
         q_local = translate_logic(q_tr, "to_local", conf["lang"])
         q_english = translate_logic(q_tr, "to_english")
         
-        with st.spinner(f"🧿 {sel_brand} taranıyor (Max 15 Ürün)..."):
+        with st.spinner(f"🧿 {sel_brand} taranıyor..."):
             data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
         
         if data and "products" in data and len(data["products"]) > 0:
@@ -230,7 +263,10 @@ if btn_start:
             tot = len(data["products"])
             
             for i, p in enumerate(data["products"]):
-                p_raw = clean_price(p.get("price", 0))
+                # DÜZELTİLEN YER: Currency code gönderiyoruz
+                p_raw = clean_price(p.get("price", 0), curr)
+                
+                # Fiyat 0'dan büyükse ve mantıklıysa
                 if p_raw > 0:
                     p_tl = p_raw * loc_rate
                     p_usd = p_tl / usd_rate
@@ -261,10 +297,10 @@ if btn_start:
                     "usd_rate": usd_rate, "loc_rate": loc_rate, "curr": curr
                 }
             else:
-                st.warning(f"{sel_brand} sitesinde fiyat formatı okunamadı.")
+                st.warning(f"{sel_brand} sitesinde fiyat formatı okunamadı. (Ham veri: {data['products'][:2]})")
                 st.session_state['search_results'] = None
         else:
-            st.error(f"⚠️ Ürün bulunamadı. '{q_local}' terimi {sel_brand} sitesinde sonuç vermedi.")
+            st.error("Ürün bulunamadı.")
             st.session_state['search_results'] = None
 
 # --- RENDER ---
@@ -296,7 +332,7 @@ if st.session_state['search_results'] is not None:
     st.dataframe(
         df,
         column_config={
-            "Görsel": st.column_config.ImageColumn("Görsel", help="Ürün Görseli"),
+            "Görsel": st.column_config.ImageColumn("Görsel"),
             "Link": st.column_config.LinkColumn("Link", display_text="🔗 Git"),
             "Yerel Fiyat": st.column_config.NumberColumn(f"Fiyat ({curr})", format="%.2f"),
             "USD": st.column_config.NumberColumn("USD ($)", format="$%.2f"),
