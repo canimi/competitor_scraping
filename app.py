@@ -291,4 +291,14 @@ if st.session_state['search_results'] is not None:
     st.dataframe(
         df,
         column_config={
-            "Link": st.column_config.LinkColumn("L
+            "Link": st.column_config.LinkColumn("Link", display_text="🔗 Git"),
+            "Yerel Fiyat": st.column_config.NumberColumn(f"Fiyat ({curr})", format="%.2f"),
+            "USD": st.column_config.NumberColumn("USD ($)", format="$%.2f"),
+            "TL": st.column_config.NumberColumn("TL (₺)", format="%.2f ₺")
+        },
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    csv = df.to_csv(index=False).encode('utf-8-sig')
+    st.download_button("💾 Excel İndir", csv, "lcw_analiz.csv", "text/csv")
