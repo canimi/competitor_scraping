@@ -22,6 +22,7 @@ st.markdown("""
     .stDataFrame { border: 1px solid #30363d; border-radius: 5px; }
     [data-testid="stSidebar"] { background-color: #0d1117; border-right: 1px solid #30363d; }
     div.stButton > button { background: linear-gradient(90deg, #1c54b2 0%, #0d3c85 100%); color: white; border: none; padding: 12px 24px; font-weight: bold; width: 100%; border-radius: 8px; }
+    .stAlert { background-color: #161b22; color: #e6edf3; border: 1px solid #30363d; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -99,7 +100,6 @@ def translate_logic(text, mode="to_local", target_lang="en"):
 def clean_price(price_raw, currency_code="USD"):
     if not price_raw: return 0.0
     s = str(price_raw).lower()
-    # Para birimi sembollerini temizle
     for code in ["rsd", "din", "km", "bam", "лв", "bgn", "eur", "ron", "lei", "tl", "try", "huf", "ft"]:
         s = s.replace(code, "")
     s = s.strip()
@@ -126,26 +126,24 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
     url = "https://api.perplexity.ai/chat/completions"
     domain_query = hardcoded_url.replace("https://", "").replace("http://", "").strip("/")
     
-    system_msg = "You are a precise pricing bot. You output ONLY JSON."
+    system_msg = "You are a specialized e-commerce scraper. You output ONLY JSON."
     
-    # --- HALÜSİNASYON ENGELLEYİCİ PROMPT ---
-    # "Exactly", "Strictly", "Do not return similar items" komutları eklendi.
+    # --- PROMPT DÜZELTMESİ: ESNEKLİK SAĞLANDI ---
+    # TIRNAK İŞARETLERİ KALDIRILDI.
+    # ARTIK KELİME BAZLI ARAMA YAPARAK ÜRÜNÜ ISKALAMIYOR.
     user_msg = f"""
     ACTION: Targeted search using 'site:' operator on: {domain_query}
     
     QUERIES:
-    1. site:{domain_query} "{product_local}"
-    2. site:{domain_query} "{product_english}"
+    1. site:{domain_query} {product_local}
+    2. site:{domain_query} {product_english}
     
-    CRITICAL INSTRUCTIONS (READ CAREFULLY):
-    1. **STRICT MATCHING ONLY:** You must find products that MATCH the search query.
-       - If I search for "Face Towel", DO NOT return "Bath Towel" or "Hand Towel".
-       - If I search for "Duvet Cover", DO NOT return "Pillowcase".
-       - If the specific item is not found, RETURN AN EMPTY LIST. Do not try to be helpful by returning "similar" items.
-    
-    2. **REAL PRICES:** Extract the actual price from the page.
-    
-    3. **QUANTITY:** Up to 15 items, ONLY IF they match the query.
+    INSTRUCTIONS:
+    - Search specifically within the domain.
+    - **FIND THE PRODUCT:** The exact name might be different (e.g. 'Bedding Set' instead of 'Double Duvet'). Find relevant items.
+    - **PEPCO/JUMBO NOTE:** If it's a catalog site, extract prices from the listing.
+    - **QUANTITY:** Extract 10-15 products.
+    - **PRICE:** Extract the raw number.
     
     OUTPUT JSON:
     {{
@@ -162,7 +160,7 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
     payload = {
         "model": "sonar",
         "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        "temperature": 0.1, # En düşük yaratıcılık
+        "temperature": 0.1,
         "max_tokens": 2000 
     }
     
@@ -216,7 +214,7 @@ if btn_start:
         q_local = translate_logic(q_tr, "to_local", conf["lang"])
         q_english = translate_logic(q_tr, "to_english")
         
-        st.info(f"🔎 Aranıyor: **{q_local}** (Strict Match)")
+        st.info(f"🔎 Aranıyor: {q_local} ({target_url})")
         
         with st.spinner(f"🧿 {sel_brand} taranıyor..."):
             data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
@@ -255,7 +253,6 @@ if btn_start:
             
             if rows:
                 df = pd.DataFrame(rows)
-                # İstenen Kolon Sırası
                 cols = ["Marka", "Ülke", "Ürün Yerel Adı", "Ürün Türkçe Adı", "Yerel Fiyat", "USD", "TL", "Link"]
                 df = df[cols]
                 
@@ -264,10 +261,10 @@ if btn_start:
                     "usd_rate": usd_rate, "loc_rate": loc_rate, "curr": curr
                 }
             else:
-                st.warning(f"{sel_brand} sitesinde eşleşen ürünlerin fiyatı okunamadı.")
+                st.warning(f"{sel_brand} sitesinde fiyat formatı okunamadı.")
                 st.session_state['search_results'] = None
         else:
-            st.error(f"🚫 Sonuç Bulunamadı. '{q_local}' için tam eşleşme yok.")
+            st.error(f"⚠️ Ürün bulunamadı. '{q_local}' terimiyle sonuç dönmedi.")
             st.session_state['search_results'] = None
 
 # --- RENDER ---
