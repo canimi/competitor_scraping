@@ -111,42 +111,40 @@ def clean_price(price_raw):
     except: return 0.0
 
 def validate_image_url(url, base_url):
+    """
+    Resim linklerini doğrular ve onarır.
+    """
     if not url or str(url).lower() == "none" or str(url) == "":
-        return "https://cdn-icons-png.flaticon.com/512/1178/1178479.png"
+        return "https://cdn-icons-png.flaticon.com/512/1178/1178479.png" # Boş resim ikonu
     
+    # Göreceli linkleri (relative path) düzelt
     if not url.startswith("http"):
         from urllib.parse import urljoin
         return urljoin(base_url, url)
+        
     return url
 
 def search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url):
-    """
-    BU FONKSİYON ARTIK 'SITE:' OPERATÖRÜ KULLANARAK ARAMA YAPAR.
-    Böylece 'bazen bulup bazen bulamama' sorunu ortadan kalkar.
-    """
     url = "https://api.perplexity.ai/chat/completions"
     
-    # Domaini ayıkla (örn: https://www.zarahome.com/ba/ -> www.zarahome.com/ba/)
-    # Bu sayede arama motoru sadece o siteye odaklanır.
+    # Domaini ayıkla
     domain_query = hardcoded_url.replace("https://", "").replace("http://", "").strip("/")
     
-    system_msg = "You are a precise search engine bot. Output strictly JSON."
+    system_msg = "You are a specialized e-commerce scraper. You output ONLY JSON."
     
-    # --- KARARLILIK İÇİN YENİ PROMPT ---
-    # AI'a "site:domain ürün" araması yaptırıyoruz. Bu en kesin yöntemdir.
+    # --- GÜNCELLENEN PROMPT (LIMIT ARTIRILDI + RESİM ZORUNLU) ---
     user_msg = f"""
-    ACTION: Perform a strictly targeted search using the 'site:' operator.
+    ACTION: Perform a targeted search using the 'site:' operator on: {domain_query}
     
-    SEARCH QUERIES TO EXECUTE:
+    QUERIES:
     1. site:{domain_query} "{product_local}"
     2. site:{domain_query} "{product_english}"
     
     INSTRUCTIONS:
-    - You MUST search within the specific domain provided above.
-    - Look for product listing pages or product detail pages matching the keywords.
-    - If it's a Catalog/Brochure site (Pepco/Jumbo), extract valid product offers from the search snippets.
-    - Extract 5 products.
-    - **IMAGE IS MANDATORY:** Find the image URL (src ending in jpg/png/webp).
+    - Search specifically within the domain.
+    - **QUANTITY:** Extract between 10 to 15 products if available.
+    - **IMAGES (MANDATORY):** You MUST extract the direct image URL (src) for each product. Look for 'og:image' meta tags or main product image tags.
+    - **PRICE:** Must be numeric.
     
     OUTPUT JSON:
     {{
@@ -154,18 +152,19 @@ def search_sonar(brand, product_local, product_english, country, currency_code, 
             {{ 
                 "name": "Local Product Name", 
                 "price": 10.99, 
-                "url": "https://...", 
-                "image": "https://..." 
+                "url": "https://product-link...", 
+                "image": "https://image-link.jpg" 
             }}
         ]
     }}
     """
     
+    # Token limitini artırdık ki 15 ürün sığsın
     payload = {
         "model": "sonar",
         "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        "temperature": 0.1, # En düşük yaratıcılık = En yüksek tutarlılık
-        "max_tokens": 1000
+        "temperature": 0.1,
+        "max_tokens": 2000 
     }
     
     headers = { "Authorization": f"Bearer {PERPLEXITY_KEY}", "Content-Type": "application/json" }
@@ -215,12 +214,10 @@ if btn_start:
     else:
         st.success(f"🎯 Hedef Site: {target_url}")
         
-        # Hem Yerel Dil hem İngilizceye çeviriyoruz (Garanti olsun diye)
         q_local = translate_logic(q_tr, "to_local", conf["lang"])
         q_english = translate_logic(q_tr, "to_english")
         
-        with st.spinner(f"🧿 {sel_brand} üzerinde '{q_local}' ve '{q_english}' aranıyor..."):
-            # Yeni fonksiyona her iki dili de gönderiyoruz
+        with st.spinner(f"🧿 {sel_brand} taranıyor (Max 15 Ürün)..."):
             data = search_sonar(sel_brand, q_local, q_english, sel_country, curr, target_url)
         
         if data and "products" in data and len(data["products"]) > 0:
@@ -299,7 +296,7 @@ if st.session_state['search_results'] is not None:
     st.dataframe(
         df,
         column_config={
-            "Görsel": st.column_config.ImageColumn("Görsel"),
+            "Görsel": st.column_config.ImageColumn("Görsel", help="Ürün Görseli"),
             "Link": st.column_config.LinkColumn("Link", display_text="🔗 Git"),
             "Yerel Fiyat": st.column_config.NumberColumn(f"Fiyat ({curr})", format="%.2f"),
             "USD": st.column_config.NumberColumn("USD ($)", format="$%.2f"),
