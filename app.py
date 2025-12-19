@@ -9,10 +9,6 @@ from datetime import datetime
 import hashlib
 import time
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from rapidfuzz import fuzz
-import plotly.express as px
-import plotly.graph_objects as go
 
 # --- LOGGING SETUP ---
 logging.basicConfig(level=logging.INFO)
@@ -146,12 +142,10 @@ def clean_price(price_raw, currency_code="USD"):
     
     s = str(price_raw).lower()
     
-    # Gereksiz kelimeleri temizle
     noise_words = ["from", "start", "to", "price", "fiyat", "only", "de la", "desde", "preț"]
     for word in noise_words:
         s = s.replace(word, "")
     
-    # Para birimi sembollerini temizle
     currency_symbols = ["rsd", "din", "km", "bam", "лв", "bgn", "eur", "ron", "lei", "tl", 
                        "try", "huf", "ft", "$", "€", "£", "kzt", "₸", "uah", "₴"]
     for symbol in currency_symbols:
@@ -164,7 +158,6 @@ def clean_price(price_raw, currency_code="USD"):
         return 0.0
     
     try:
-        # Binlik ayırıcı ve ondalık nokta kontrolü
         if ',' in s and '.' in s:
             if s.rfind(',') > s.rfind('.'):
                 s = s.replace('.', '').replace(',', '.')
@@ -181,26 +174,53 @@ def clean_price(price_raw, currency_code="USD"):
         logger.warning(f"⚠️ Fiyat parse hatası: {price_raw} -> {e}")
         return 0.0
 
+def simple_similarity(s1, s2):
+    """Basit string benzerlik - rapidfuzz olmadan"""
+    s1 = s1.lower()
+    s2 = s2.lower()
+    
+    # Tam eşleşme
+    if s1 == s2:
+        return 100
+    
+    # Substring kontrolü
+    if s1 in s2 or s2 in s1:
+        return 80
+    
+    # Kelime bazlı eşleşme
+    words1 = set(s1.split())
+    words2 = set(s2.split())
+    
+    if not words1 or not words2:
+        return 0
+    
+    common = words1 & words2
+    union = words1 | words2
+    
+    # Jaccard similarity * 100
+    similarity = (len(common) / len(union)) * 100
+    
+    return similarity
+
 def validate_relevance_improved(product_name_local, query_english):
-    """Fuzzy matching ile geliştirilmiş doğrulama"""
+    """Basit string matching ile doğrulama - rapidfuzz olmadan"""
     try:
         prod_en = GoogleTranslator(source='auto', target='en').translate(product_name_local).lower()
         q_en = query_english.lower()
         
-        # Fuzzy matching score
-        similarity = fuzz.partial_ratio(q_en, prod_en)
+        # Basit benzerlik skoru
+        similarity = simple_similarity(q_en, prod_en)
         
         # Keyword extraction
         q_keywords = set(word for word in q_en.split() if len(word) > 2)
         p_keywords = set(word for word in prod_en.split() if len(word) > 2)
         
-        # Ortak kelimeler
         common_words = q_keywords & p_keywords
         
         # Scoring sistemi
         if similarity > 75:
             return True, prod_en, "🟢 High Match"
-        elif similarity > 55 or len(common_words) >= 2:
+        elif similarity > 50 or len(common_words) >= 2:
             return True, prod_en, "🟡 Partial Match"
         elif any(kw in prod_en for kw in q_keywords):
             return True, prod_en, "🟠 Keyword Match"
@@ -222,7 +242,7 @@ def search_sonar_cached(brand, product_local, product_english, country, currency
     return search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url)
 
 def search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url):
-    """Perplexity Sonar API ile ürün arama - Geliştirilmiş"""
+    """Perplexity Sonar API ile ürün arama"""
     url = "https://api.perplexity.ai/chat/completions"
     domain = hardcoded_url.replace("https://", "").replace("http://", "").split("/")[0]
 
@@ -286,7 +306,6 @@ IMPORTANT: Return comprehensive product list, not just top results.
         if res.status_code == 200:
             raw = res.json()['choices'][0]['message']['content']
             
-            # JSON extraction
             clean = raw.replace("```json", "").replace("```", "").strip()
             start = clean.find("{")
             end = clean.rfind("}")
@@ -295,7 +314,6 @@ IMPORTANT: Return comprehensive product list, not just top results.
                 clean = clean[start:end+1]
                 data = json.loads(clean)
                 
-                # Veri kalitesi kontrolü
                 if "products" in data and len(data["products"]) > 0:
                     logger.info(f"✅ {brand} - {len(data['products'])} ürün bulundu")
                     return data
@@ -304,8 +322,6 @@ IMPORTANT: Return comprehensive product list, not just top results.
                     return None
             else:
                 logger.error(f"❌ {brand} - JSON parse edilemedi")
-                with st.expander(f"🔍 {brand} Raw Response (Debug)"):
-                    st.code(raw)
                 return None
         
         elif res.status_code == 429:
@@ -341,15 +357,12 @@ def generate_insights(df):
     insights = []
     
     try:
-        # En ucuz ürün
         cheapest = df.nsmallest(1, 'TL').iloc[0]
         insights.append(f"💰 **En Uygun:** {cheapest['Ürün Türkçe Adı'][:50]}... - **{cheapest['TL']:.0f}₺** ({cheapest['Marka']})")
         
-        # En pahalı ürün
         expensive = df.nlargest(1, 'TL').iloc[0]
         insights.append(f"💎 **En Pahalı:** {expensive['Ürün Türkçe Adı'][:50]}... - **{expensive['TL']:.0f}₺** ({expensive['Marka']})")
         
-        # Fiyat aralığı analizi
         price_range = df['TL'].max() - df['TL'].min()
         avg_price = df['TL'].mean()
         variance_pct = (price_range / avg_price) * 100 if avg_price > 0 else 0
@@ -361,7 +374,6 @@ def generate_insights(df):
         else:
             insights.append(f"📊 **Fiyatlar Tutarlı:** %{variance_pct:.0f} varyasyon")
         
-        # Marka bazlı analiz (eğer birden fazla marka varsa)
         if df['Marka'].nunique() > 1:
             brand_avg = df.groupby('Marka')['TL'].mean().sort_values()
             cheapest_brand = brand_avg.index[0]
@@ -370,7 +382,6 @@ def generate_insights(df):
             insights.append(f"🏆 **En Ekonomik Marka:** {cheapest_brand} (Ort: {brand_avg.iloc[0]:.0f}₺)")
             insights.append(f"💸 **En Pahalı Marka:** {expensive_brand} (Ort: {brand_avg.iloc[-1]:.0f}₺)")
         
-        # Ülke bazlı öneri (eğer birden fazla ülke varsa)
         if df['Ülke'].nunique() > 1:
             country_avg = df.groupby('Ülke')['TL'].mean().sort_values()
             best_country = country_avg.index[0]
@@ -394,7 +405,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Gelişmiş filtreler
     st.header("🔎 Arama Filtreleri")
     
     search_mode = st.radio("Mod Seç", ["Tek Ülke/Marka", "Çoklu Karşılaştırma"])
@@ -416,7 +426,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Gelişmiş ayarlar
     with st.expander("⚙️ Gelişmiş Ayarlar"):
         show_raw_data = st.checkbox("Ham API yanıtlarını göster", value=False)
         min_price_filter = st.number_input("Min Fiyat (TL)", min_value=0, value=0)
@@ -456,7 +465,6 @@ if btn_start:
         q_local = translate_logic(q_tr, "to_local", conf["lang"])
         q_english = translate_logic(q_tr, "to_english")
         
-        # Cache kontrolü
         cache_key = get_cache_key(sel_brand, q_tr, sel_country, curr)
         
         with st.spinner(f"🧿 {sel_brand} mağazası taranıyor... (Min 15 ürün hedefleniyor)"):
@@ -481,7 +489,6 @@ if btn_start:
             for i, p in enumerate(data["products"]):
                 loc_name = p.get("name", "Bilinmiyor")
                 
-                # Geliştirilmiş doğrulama
                 is_valid, eng_name_check, match_quality = validate_relevance_improved(loc_name, q_english)
                 
                 if is_valid:
@@ -491,7 +498,6 @@ if btn_start:
                         p_tl = p_raw * loc_rate
                         p_usd = p_tl / usd_rate
                         
-                        # Fiyat filtreleme
                         if min_price_filter <= p_tl <= max_price_filter or (min_price_filter == 0 and max_price_filter == 10000):
                             prices_tl.append(p_tl)
                             
@@ -524,7 +530,6 @@ if btn_start:
         else:
             st.error(f"❌ {sel_brand}: Sonuç bulunamadı")
     
-    # Tüm sonuçları birleştir
     if all_results:
         df = pd.DataFrame(all_results)
         cols = ["Marka", "Ülke", "Ürün Yerel Adı", "Ürün Türkçe Adı", "Yerel Fiyat", "USD", "TL", "Match Quality", "Link"]
@@ -549,7 +554,6 @@ if st.session_state['search_results'] is not None:
     cnt = len(df)
     
     if cnt > 0:
-        # Metrikler
         prices_tl = df['TL'].tolist()
         avg = df['TL'].mean()
         mn = df['TL'].min()
@@ -571,7 +575,6 @@ if st.session_state['search_results'] is not None:
         
         st.markdown("---")
         
-        # Insights
         insights = generate_insights(df)
         if insights:
             st.markdown("### 💡 Analiz Önerileri")
@@ -580,42 +583,6 @@ if st.session_state['search_results'] is not None:
         
         st.markdown("---")
         
-        # Görselleştirmeler
-        if len(sel_brands) > 1 or df['Marka'].nunique() > 1:
-            st.markdown("### 📊 Fiyat Karşılaştırmaları")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Marka bazlı box plot
-                fig_box = px.box(df, x="Marka", y="TL", color="Marka",
-                               title="Marka Bazlı Fiyat Dağılımı",
-                               labels={"TL": "Fiyat (₺)", "Marka": ""},
-                               template="plotly_dark")
-                fig_box.update_layout(showlegend=False, height=400)
-                st.plotly_chart(fig_box, use_container_width=True)
-            
-            with col2:
-                # Marka bazlı ortalama fiyat
-                brand_avg = df.groupby('Marka')['TL'].mean().sort_values()
-                fig_bar = px.bar(brand_avg, orientation='h',
-                               title="Marka Ortalama Fiyatları",
-                               labels={"value": "Ortalama Fiyat (₺)", "Marka": ""},
-                               template="plotly_dark")
-                fig_bar.update_layout(showlegend=False, height=400)
-                st.plotly_chart(fig_bar, use_container_width=True)
-        
-        # Fiyat dağılımı histogram
-        fig_hist = px.histogram(df, x="TL", nbins=20, 
-                               title="Fiyat Dağılımı",
-                               labels={"TL": "Fiyat (₺)", "count": "Ürün Sayısı"},
-                               template="plotly_dark")
-        fig_hist.update_layout(height=300)
-        st.plotly_chart(fig_hist, use_container_width=True)
-        
-        st.markdown("---")
-        
-        # Veri tablosu
         st.markdown("### 📋 Detaylı Sonuçlar")
         
         st.dataframe(
@@ -632,58 +599,17 @@ if st.session_state['search_results'] is not None:
             height=500
         )
         
-        # Export seçenekleri
         st.markdown("### 💾 İndir")
         
-        col_exp1, col_exp2 = st.columns(2)
-        
-        with col_exp1:
-            csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(
-                "📥 CSV İndir",
-                csv,
-                f"lcw_analiz_{res['country']}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                "text/csv",
-                use_container_width=True
-            )
-        
-        with col_exp2:
-            # Excel export (openpyxl ile)
-            try:
-                from io import BytesIO
-                output = BytesIO()
-                
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df.to_excel(writer, sheet_name='Fiyatlar', index=False)
-                    
-                    workbook = writer.book
-                    worksheet = writer.sheets['Fiyatlar']
-                    
-                    # Format ayarları
-                    header_format = workbook.add_format({
-                        'bold': True,
-                        'bg_color': '#4da6ff',
-                        'font_color': 'white',
-                        'border': 1
-                    })
-                    
-                    for col_num, value in enumerate(df.columns.values):
-                        worksheet.write(0, col_num, value, header_format)
-                        worksheet.set_column(col_num, col_num, 20)
-                
-                excel_data = output.getvalue()
-                
-                st.download_button(
-                    "📊 Excel İndir",
-                    excel_data,
-                    f"lcw_analiz_{res['country']}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-            except ImportError:
-                st.warning("Excel export için xlsxwriter yükle: pip install xlsxwriter")
+        csv = df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            "📥 CSV İndir",
+            csv,
+            f"lcw_analiz_{res['country']}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            "text/csv",
+            use_container_width=True
+        )
 
-# --- FOOTER ---
 st.markdown("---")
 st.markdown(
     "<div style='text-align:center; color:#8b949e; font-size:12px;'>"
