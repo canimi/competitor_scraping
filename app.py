@@ -6,7 +6,7 @@ import requests
 import re
 import time
 from deep_translator import GoogleTranslator
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from bs4 import BeautifulSoup
 
 # --- SAYFA YAPILANDIRMASI ---
 st.set_page_config(page_title="LCW Global Intelligence", layout="wide", page_icon="🧿")
@@ -28,7 +28,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- BAŞLIK ---
 st.markdown("<h1>🧿 LCW HOME | GLOBAL INTELLIGENCE</h1>", unsafe_allow_html=True)
 
 # --- SESSION STATE ---
@@ -37,110 +36,60 @@ if 'search_results' not in st.session_state:
 
 # --- API KEYS ---
 PERPLEXITY_KEY = os.environ.get("PERPLEXITY_API_KEY") or st.secrets.get("PERPLEXITY_API_KEY", "")
+SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY") or st.secrets.get("SCRAPER_API_KEY", "")
 
-# --- SITE-SPECIFIC SELECTORS ---
-SITE_SELECTORS = {
-    "Pepco": {
-        "search_url": "{base_url}bg-bg/search?q={query}",
-        "product_grid": "div.product-tile, div[data-testid='product-card']",
-        "name": "h3.product-tile-name, a.product-tile-link",
-        "price": "span.product-tile-price-value, span[data-testid='price']"
-    },
-    "Sinsay": {
-        "search_url": "{base_url}search?q={query}",
-        "product_grid": "article.product, div.product-tile",
-        "name": "h2.product-name, h3.product-title",
-        "price": "span.price, span.product-price-value"
-    },
-    "Zara Home": {
-        "search_url": "{base_url}search?searchTerm={query}",
-        "product_grid": "li.product-grid-item, div.product-grid-product",
-        "name": "a.product-link, h2.product-detail-info__header-name",
-        "price": "span.price-current__amount, span.money-amount__main"
-    },
-    "H&M Home": {
-        "search_url": "{base_url}search?q={query}",
-        "product_grid": "article.product-item, li.product-item",
-        "name": "h3.item-heading, a.item-link",
-        "price": "span.price, span.price-value"
-    },
-    "Jysk": {
-        "search_url": "{base_url}search?query={query}",
-        "product_grid": "div.product, div.product-item",
-        "name": "h2.product-name, a.product-link",
-        "price": "span.price, span.price-value"
-    },
-    "Jumbo": {
-        "search_url": "{base_url}search?q={query}",
-        "product_grid": "div.product-card, div.product-item",
-        "name": "h3.product-title, a.product-name",
-        "price": "span.price, div.price"
-    },
-    "English Home": {
-        "search_url": "{base_url}arama?q={query}",
-        "product_grid": "div.product-item, div.prd",
-        "name": "a.product-name, h3.prd-name",
-        "price": "span.price, span.prd-price"
-    }
-}
-
-# --- URL DB ---
+# --- URL DATABASE ---
 URL_DB = {
     "Bulgaristan": { 
-        "Pepco": "https://pepco.bg/", 
-        "Sinsay": "https://www.sinsay.com/bg/bg/", 
-        "Zara Home": "https://www.zarahome.com/bg/", 
-        "H&M Home": "https://www2.hm.com/bg_bg/home.html", 
-        "Jysk": "https://jysk.bg/", 
-        "Jumbo": "https://www.jumbo.bg/", 
-        "English Home": "https://englishhome.bg/"
+        "Pepco": {"base": "https://pepco.bg/", "search": "bg-bg/search?q={query}"}, 
+        "Sinsay": {"base": "https://www.sinsay.com/bg/bg/", "search": "search?q={query}"}, 
+        "Zara Home": {"base": "https://www.zarahome.com/bg/", "search": "search?searchTerm={query}"}, 
+        "H&M Home": {"base": "https://www2.hm.com/bg_bg/", "search": "search?q={query}"}, 
+        "Jysk": {"base": "https://jysk.bg/", "search": "search?query={query}"}, 
+        "English Home": {"base": "https://englishhome.bg/", "search": "arama?q={query}"}
     },
     "Bosna Hersek": { 
-        "Pepco": "https://pepco.ba/", 
-        "Sinsay": "https://www.sinsay.com/ba/bs/", 
-        "Zara Home": "https://www.zarahome.com/ba/", 
-        "H&M Home": "https://www.hm.com/ba", 
-        "Jysk": "https://jysk.ba/", 
-        "Jumbo": "https://www.jumbo.ba/", 
-        "English Home": "https://englishhome.ba/"
-    },
-    "Yunanistan": { 
-        "Pepco": "https://pepco.gr/", 
-        "Sinsay": "https://www.sinsay.com/gr/el/", 
-        "Zara Home": "https://www.zarahome.com/gr/", 
-        "H&M Home": "https://www2.hm.com/en_gr/home.html", 
-        "Jysk": "https://jysk.gr/", 
-        "Jumbo": "https://www.e-jumbo.gr/", 
-        "English Home": "https://englishhome.gr/"
+        "Pepco": {"base": "https://pepco.ba/", "search": "ba-ba/search?q={query}"}, 
+        "Sinsay": {"base": "https://www.sinsay.com/ba/bs/", "search": "search?q={query}"}, 
+        "Zara Home": {"base": "https://www.zarahome.com/ba/", "search": "search?searchTerm={query}"}, 
+        "Jysk": {"base": "https://jysk.ba/", "search": "search?query={query}"}, 
+        "English Home": {"base": "https://englishhome.ba/", "search": "arama?q={query}"}
     },
     "Sırbistan": { 
-        "Pepco": "https://pepco.rs/", 
-        "Sinsay": "https://www.sinsay.com/rs/sr/", 
-        "Zara Home": "https://www.zarahome.com/rs/", 
-        "H&M Home": "https://www2.hm.com/rs_en/home.html", 
-        "Jysk": "https://jysk.rs/", 
-        "Jumbo": "https://www.jumbo.rs/", 
-        "English Home": "https://englishhome.rs/"
+        "Pepco": {"base": "https://pepco.rs/", "search": "rs-sr/search?q={query}"}, 
+        "Sinsay": {"base": "https://www.sinsay.com/rs/sr/", "search": "search?q={query}"}, 
+        "Zara Home": {"base": "https://www.zarahome.com/rs/", "search": "search?searchTerm={query}"}, 
+        "Jysk": {"base": "https://jysk.rs/", "search": "search?query={query}"}, 
+        "English Home": {"base": "https://englishhome.rs/", "search": "arama?q={query}"}
     },
-    "Romanya": { 
-        "Pepco": "https://pepco.ro/", 
-        "Sinsay": "https://www.sinsay.com/ro/ro/", 
-        "Zara Home": "https://www.zarahome.com/ro/", 
-        "H&M Home": "https://www2.hm.com/ro_ro/home.html", 
-        "Jysk": "https://jysk.ro/", 
-        "English Home": "https://englishhome.ro/"
+}
+
+# --- SITE SELECTORS ---
+SITE_SELECTORS = {
+    "Pepco": {
+        "product": ["div.product-tile", "div[class*='product']"],
+        "name": ["h3.product-tile-name", "a.product-tile-link", "h3", "h2"],
+        "price": ["span.product-tile-price-value", "span[class*='price']", ".price"]
+    },
+    "Sinsay": {
+        "product": ["article.product", "div.product-tile", "div[class*='product']"],
+        "name": ["h2.product-name", "h3.product-title", "a.product-link"],
+        "price": ["span.price", "span[class*='price']", ".price"]
+    },
+    "Zara Home": {
+        "product": ["li.product-grid-item", "div.product-grid-product", "article"],
+        "name": ["a.product-link", "h2.product-detail-info__header-name"],
+        "price": ["span.price-current__amount", "span.money-amount__main"]
     },
 }
 
 COUNTRIES_META = {
     "Bulgaristan":  {"curr": "BGN", "lang": "bg"},
     "Bosna Hersek": {"curr": "BAM", "lang": "bs"},
-    "Yunanistan":   {"curr": "EUR", "lang": "el"},
     "Sırbistan":    {"curr": "RSD", "lang": "sr"},
-    "Romanya":      {"curr": "RON", "lang": "ro"},
 }
 
-BRANDS = ["Pepco", "Sinsay", "Zara Home", "H&M Home", "Jysk", "Jumbo", "English Home"]
+BRANDS = ["Pepco", "Sinsay", "Zara Home", "H&M Home", "Jysk", "English Home"]
 
 # --- FONKSİYONLAR ---
 @st.cache_data(ttl=3600)
@@ -148,11 +97,9 @@ def get_rates():
     try:
         r = requests.get("https://api.exchangerate-api.com/v4/latest/TRY", timeout=10).json()['rates']
         rates = {k: 1/v for k, v in r.items() if v > 0}
-        if "EUR" in rates: 
-            rates["BAM"] = rates["EUR"] / 1.95583
+        if "EUR" in rates: rates["BAM"] = rates["EUR"] / 1.95583
         return rates
-    except: 
-        return None
+    except: return None
 
 def translate_logic(text, mode="to_local", target_lang="en"):
     if not text: return text
@@ -163,232 +110,172 @@ def translate_logic(text, mode="to_local", target_lang="en"):
             return GoogleTranslator(source='auto', target='en').translate(text)
         else:
             return GoogleTranslator(source='auto', target='tr').translate(text)
-    except: 
-        return text
+    except: return text
 
 def clean_price(price_raw, currency_code="USD"):
     if not price_raw: return 0.0
     s = str(price_raw).lower()
-    for bad in ["from", "start", "to", "price", "fiyat", "only", "now", "was", "de la", "από"]:
+    for bad in ["from", "start", "to", "price", "fiyat", "only", "now", "was", "de", "от"]:
         s = s.replace(bad, "")
-    for code in ["rsd", "din", "km", "bam", "лв", "bgn", "eur", "ron", "lei", "tl", "try", "huf", "ft", "$", "€", "£", "₺"]:
+    for code in ["rsd", "din", "km", "bam", "лв", "bgn", "eur", "ron", "lei", "tl", "try", "$", "€", "£", "₺"]:
         s = s.replace(code, "")
-    s = s.strip()
-    s = re.sub(r'[^\d.,]', '', s)
+    s = re.sub(r'[^\d.,]', '', s.strip())
     if not s: return 0.0
-    
     numbers = re.findall(r'[\d.,]+', s)
     if not numbers: return 0.0
     s = numbers[0]
-    
     try:
         if ',' in s and '.' in s:
-            if s.rfind(',') > s.rfind('.'): 
-                s = s.replace('.', '').replace(',', '.')
-            else: 
-                s = s.replace(',', '')
+            s = s.replace('.', '').replace(',', '.') if s.rfind(',') > s.rfind('.') else s.replace(',', '')
         elif ',' in s:
-            parts = s.split(',')
-            if len(parts[-1]) == 2: 
-                s = s.replace(',', '.')
-            else: 
-                s = s.replace(',', '')
+            s = s.replace(',', '.') if len(s.split(',')[-1]) == 2 else s.replace(',', '')
         return float(s)
-    except: 
-        return 0.0
+    except: return 0.0
 
-def validate_relevance(product_name_local, query_english):
+def validate_relevance(product_name, query_english):
     try:
-        prod_en = GoogleTranslator(source='auto', target='en').translate(product_name_local).lower()
-        q_en = query_english.lower()
-        keywords = [k for k in q_en.split() if len(k) > 2]
-        main_object = keywords[-1] if keywords else ""
-        
-        if main_object in prod_en:
-            return True, prod_en
-        
-        match = any(k in prod_en for k in keywords)
-        return match, prod_en
+        prod_en = GoogleTranslator(source='auto', target='en').translate(product_name).lower()
+        keywords = [k for k in query_english.lower().split() if len(k) > 2]
+        main = keywords[-1] if keywords else ""
+        if main in prod_en: return True
+        return any(k in prod_en for k in keywords)
     except:
-        return True, product_name_local
+        return True
 
-# --- PLAYWRIGHT SCRAPER ---
-@st.cache_data(ttl=1800, show_spinner=False)
-def scrape_with_playwright(brand, base_url, product_local, product_english):
-    """Playwright ile gerçek browser scraping"""
+# --- SCRAPERAPI SCRAPER ---
+def scrape_with_scraperapi(brand, site_config, product_local):
+    """ScraperAPI ile JavaScript render + scraping"""
     
-    if brand not in SITE_SELECTORS:
+    if not SCRAPER_API_KEY or brand not in SITE_SELECTORS:
         return None
     
-    selectors = SITE_SELECTORS[brand]
+    base_url = site_config["base"]
+    search_path = site_config["search"].format(query=product_local.replace(" ", "+"))
+    full_url = base_url + search_path
     
-    # Arama URL'i oluştur
-    search_url = selectors["search_url"].format(
-        base_url=base_url,
-        query=product_local.replace(" ", "+")
-    )
-    
-    products = []
+    api_url = "http://api.scraperapi.com"
+    params = {
+        "api_key": SCRAPER_API_KEY,
+        "url": full_url,
+        "render": "true",
+        "country_code": "bg"
+    }
     
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={'width': 1920, 'height': 1080}
-            )
-            page = context.new_page()
-            
-            # Sayfayı aç
-            page.goto(search_url, wait_until='domcontentloaded', timeout=30000)
-            
-            # JavaScript yüklensin diye bekle
-            time.sleep(3)
-            
-            # Ürün kartlarını bul
-            product_cards = page.query_selector_all(selectors["product_grid"])
-            
-            for card in product_cards[:20]:  # İlk 20 ürün
-                try:
-                    # İsim çek
-                    name_elem = card.query_selector(selectors["name"])
-                    name = name_elem.inner_text().strip() if name_elem else None
+        response = requests.get(api_url, params=params, timeout=90)
+        
+        if response.status_code != 200:
+            st.warning(f"{brand}: HTTP {response.status_code}")
+            return None
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        selectors = SITE_SELECTORS[brand]
+        products = []
+        
+        # Ürün kartlarını bul (birden fazla selector dene)
+        cards = []
+        for product_selector in selectors["product"]:
+            cards = soup.select(product_selector)
+            if cards:
+                break
+        
+        for card in cards[:20]:
+            try:
+                # İsim bul
+                name = None
+                for name_sel in selectors["name"]:
+                    elem = card.select_one(name_sel)
+                    if elem:
+                        name = elem.get_text(strip=True)
+                        break
+                
+                # Fiyat bul
+                price = None
+                for price_sel in selectors["price"]:
+                    elem = card.select_one(price_sel)
+                    if elem:
+                        price = elem.get_text(strip=True)
+                        break
+                
+                # Link bul
+                link_elem = card.select_one("a")
+                link = link_elem.get("href", "") if link_elem else ""
+                
+                if name and price:
+                    if link and not link.startswith("http"):
+                        link = base_url.rstrip("/") + "/" + link.lstrip("/")
                     
-                    # Fiyat çek
-                    price_elem = card.query_selector(selectors["price"])
-                    price = price_elem.inner_text().strip() if price_elem else None
-                    
-                    # Link çek
-                    link_elem = card.query_selector("a")
-                    link = link_elem.get_attribute("href") if link_elem else ""
-                    
-                    if name and price:
-                        # Relative URL'i absolute yap
-                        if link and not link.startswith("http"):
-                            link = base_url.rstrip("/") + "/" + link.lstrip("/")
-                        
-                        products.append({
-                            "name": name,
-                            "price": price,
-                            "url": link
-                        })
-                except:
-                    continue
-            
-            browser.close()
-            
+                    products.append({"name": name, "price": price, "url": link})
+            except:
+                continue
+        
+        if products:
+            return {"products": products}
+        return None
+        
     except Exception as e:
-        st.warning(f"{brand} scraping hatası: {str(e)[:100]}")
+        st.warning(f"{brand} scraping hatası: {str(e)[:80]}")
+        return None
+
+# --- PERPLEXITY (Yedek) ---
+def search_sonar(brand, product_local, product_english, site_config):
+    if not PERPLEXITY_KEY:
         return None
     
-    if products:
-        return {"products": products}
-    return None
-
-# --- PERPLEXITY SCRAPER (Yedek) ---
-def search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url, api_key):
     url = "https://api.perplexity.ai/chat/completions"
-    
-    system_msg = "You are a bulk data scraper. Your job is to EXTRACT LISTS of products, not just one item."
-    
-    user_msg = f"""
-ACTION: Go to the '{product_english}' category on {hardcoded_url} (or search for '{product_local}').
-
-TASK: List AS MANY diverse products as possible found in that category.
-- Don't stop at 1 result. I need a Price List.
-- Look for different sizes (e.g., 50x90, 70x140, 30x50).
-- Look for different colors/models.
-
-TARGET: At least 10-15 items.
-
-OUTPUT JSON:
-{{
-    "products": [
-        {{ "name": "Product Name 1", "price": "10.99", "url": "link" }},
-        {{ "name": "Product Name 2", "price": "12.99", "url": "link" }},
-        ...
-    ]
-}}
-"""
+    full_url = site_config["base"]
     
     payload = {
         "model": "sonar",
-        "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        "temperature": 0.2,
-        "max_tokens": 4000
+        "messages": [
+            {"role": "system", "content": "You are a product data scraper. Extract real products with prices."},
+            {"role": "user", "content": f"""
+Search for '{product_english}' (local: '{product_local}') on {full_url}
+
+List 10-15 products with EXACT prices.
+
+OUTPUT JSON:
+{{"products": [{{"name": "Product 1", "price": "15.99", "url": "link"}}]}}
+"""}
+        ],
+        "temperature": 0.1,
+        "max_tokens": 3000
     }
     
-    headers = { "Authorization": f"Bearer {api_key}", "Content-Type": "application/json" }
-    
     try:
-        res = requests.post(url, json=payload, headers=headers, timeout=60)
+        res = requests.post(url, json=payload, headers={"Authorization": f"Bearer {PERPLEXITY_KEY}", "Content-Type": "application/json"}, timeout=60)
         if res.status_code == 200:
             raw = res.json()['choices'][0]['message']['content']
             clean = raw.replace("``````", "").strip()
             start = clean.find("{")
             end = clean.rfind("}")
             if start != -1 and end != -1:
-                clean = clean[start:end+1]
-                return json.loads(clean)
-        return None
-    except: 
-        return None
-
-# --- HYBRID SCRAPER ---
-def hybrid_scrape(brand, product_local, product_english, country, currency_code, url):
-    """Önce Playwright dene, olmazsa Perplexity'ye düş"""
-    
-    # 1. Playwright'i dene
-    st.info(f"🎭 {brand} için Playwright ile scraping başlatılıyor...")
-    result = scrape_with_playwright(brand, url, product_local, product_english)
-    
-    if result and result.get("products") and len(result["products"]) >= 3:
-        st.success(f"✅ Playwright'den {len(result['products'])} ürün çekildi!")
-        return result, "playwright"
-    
-    # 2. Playwright fail oldu, Perplexity'ye geç
-    if PERPLEXITY_KEY:
-        st.warning(f"⚠️ Playwright yetersiz, Perplexity deneniyor...")
-        result = search_sonar(brand, product_local, product_english, country, currency_code, url, PERPLEXITY_KEY)
-        
-        if result and result.get("products"):
-            st.success(f"✅ Perplexity'den {len(result['products'])} ürün çekildi!")
-            return result, "perplexity"
-    
-    return None, None
+                return json.loads(clean[start:end+1])
+    except: pass
+    return None
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.markdown('<h2 style="color:#4da6ff;">🧿 LCW HOME</h2>', unsafe_allow_html=True)
-    st.markdown('<p style="color:#8b949e; font-size:12px;">COMPETITOR PRICE TRACKER</p>', unsafe_allow_html=True)
+    st.markdown('<p style="color:#8b949e;font-size:12px;">COMPETITOR PRICE TRACKER</p>', unsafe_allow_html=True)
     
     st.markdown("---")
     
-    # Scraping metodu seçimi
-    scrape_method = st.radio(
-        "🔧 Scraping Yöntemi",
-        ["Hybrid (Playwright + Perplexity)", "Sadece Playwright", "Sadece Perplexity"],
-        help="Hybrid: Önce Playwright, sonra Perplexity dener"
-    )
+    if not SCRAPER_API_KEY and not PERPLEXITY_KEY:
+        st.error("⚠️ En az bir API key gerekli!")
+        st.stop()
+    
+    scrape_method = st.radio("🔧 Scraping Yöntemi", ["Hybrid", "ScraperAPI", "Perplexity"])
     
     st.markdown("---")
-    
-    available_countries = list(URL_DB.keys())
-    sel_country = st.selectbox("🌍 Ülke", available_countries)
-    
+    sel_country = st.selectbox("🌍 Ülke", list(URL_DB.keys()))
     available_brands = [b for b in BRANDS if URL_DB.get(sel_country, {}).get(b)]
-    sel_brands = st.multiselect(
-        "🏪 Markalar", 
-        available_brands, 
-        default=available_brands[:3] if len(available_brands) >= 3 else available_brands
-    )
-    
+    sel_brands = st.multiselect("🏪 Markalar", available_brands, default=available_brands[:2] if len(available_brands) >= 2 else available_brands)
     q_tr = st.text_input("🛍️ Ürün (Türkçe)", "Yüz Havlusu")
     
     st.markdown("---")
-    btn_start = st.button("🚀 FİYATLARI ÇEK", use_container_width=True)
+    btn = st.button("🚀 FİYATLARI ÇEK", use_container_width=True)
 
-# --- KURLAR ---
 rates = get_rates()
 conf = COUNTRIES_META.get(sel_country, {"curr": "USD", "lang": "en"})
 curr = conf["curr"]
@@ -401,14 +288,9 @@ if rates:
         c2.metric(curr, f"{rates.get(curr,0):.2f}₺")
 
 # --- ANA İŞLEM ---
-if btn_start:
-    if not rates: 
-        st.error("❌ Kur verisi alınamadı"); 
-        st.stop()
-    
-    if not sel_brands: 
-        st.error("❌ En az 1 marka seçin"); 
-        st.stop()
+if btn:
+    if not rates: st.error("❌ Kur verisi alınamadı"); st.stop()
+    if not sel_brands: st.error("❌ En az 1 marka seçin"); st.stop()
     
     q_local = translate_logic(q_tr, "to_local", conf["lang"])
     q_english = translate_logic(q_tr, "to_english")
@@ -419,58 +301,57 @@ if btn_start:
     usd_rate = rates.get("USD", 1)
     loc_rate = rates.get(curr, 1)
     
-    progress = st.progress(0, text="Markalar taranıyor...")
+    progress = st.progress(0, text="Başlatılıyor...")
     
     for idx, brand in enumerate(sel_brands):
-        target_url = URL_DB.get(sel_country, {}).get(brand)
-        
-        if not target_url:
-            st.warning(f"⚠️ {brand} - {sel_country} mevcut değil")
+        site_config = URL_DB.get(sel_country, {}).get(brand)
+        if not site_config: 
             continue
         
         progress.progress((idx + 1) / len(sel_brands), text=f"🔍 {brand} taranıyor...")
         
-        # Scraping yöntemini seç
-        if scrape_method == "Hybrid (Playwright + Perplexity)":
-            data, method = hybrid_scrape(brand, q_local, q_english, sel_country, curr, target_url)
-        elif scrape_method == "Sadece Playwright":
-            data = scrape_with_playwright(brand, target_url, q_local, q_english)
-            method = "playwright"
-        else:  # Sadece Perplexity
-            data = search_sonar(brand, q_local, q_english, sel_country, curr, target_url, PERPLEXITY_KEY) if PERPLEXITY_KEY else None
-            method = "perplexity"
+        data = None
+        method = ""
         
-        if data and "products" in data and len(data["products"]) > 0:
+        if scrape_method == "ScraperAPI":
+            data = scrape_with_scraperapi(brand, site_config, q_local)
+            method = "scraperapi"
+        elif scrape_method == "Perplexity":
+            data = search_sonar(brand, q_local, q_english, site_config)
+            method = "perplexity"
+        else:  # Hybrid
+            data = scrape_with_scraperapi(brand, site_config, q_local) if SCRAPER_API_KEY else None
+            if not data or len(data.get("products", [])) < 3:
+                data = search_sonar(brand, q_local, q_english, site_config)
+                method = "perplexity"
+            else:
+                method = "scraperapi"
+        
+        if data and data.get("products"):
             for p in data["products"]:
-                loc_name = p.get("name", "Bilinmiyor")
-                is_valid, eng_name = validate_relevance(loc_name, q_english)
-                
-                if is_valid:
+                name = p.get("name", "")
+                if validate_relevance(name, q_english):
                     p_raw = clean_price(p.get("price", 0), curr)
                     if p_raw > 0:
                         p_tl = p_raw * loc_rate
-                        p_usd = p_tl / usd_rate
-                        tr_name = translate_logic(loc_name, "to_turkish")
-                        
                         all_results.append({
                             "Marka": brand,
-                            "Ülke": sel_country,
-                            "Ürün Yerel": loc_name,
-                            "Ürün Türkçe": tr_name,
+                            "Ürün Yerel": name,
+                            "Ürün Türkçe": translate_logic(name, "to_turkish"),
                             f"Fiyat ({curr})": p_raw,
-                            "USD": p_usd,
+                            "USD": p_tl / usd_rate,
                             "TL": p_tl,
                             "Link": p.get("url", ""),
-                            "Kaynak": method.upper() if method else "UNKNOWN"
+                            "Kaynak": method.upper()
                         })
         
-        time.sleep(1)
+        time.sleep(2)
     
     progress.empty()
     
     if all_results:
-        df = pd.DataFrame(all_results)
-        st.session_state['search_results'] = {"df": df, "curr": curr}
+        st.session_state['search_results'] = {"df": pd.DataFrame(all_results), "curr": curr}
+        st.success(f"✅ Toplam {len(all_results)} ürün bulundu!")
     else:
         st.error("⚠️ Hiçbir markada ürün bulunamadı")
         st.session_state['search_results'] = None
@@ -481,32 +362,22 @@ if st.session_state['search_results']:
     df = res["df"]
     curr = res["curr"]
     
-    rates = get_rates()
-    usd_rate = rates.get("USD", 1) if rates else 1
-    loc_rate = rates.get(curr, 1) if rates else 1
+    usd_rate = rates.get("USD", 1)
+    loc_rate = rates.get(curr, 1)
     
     cnt = len(df)
     avg_tl = df["TL"].mean()
     min_tl = df["TL"].min()
     max_tl = df["TL"].max()
     
-    avg_usd = avg_tl / usd_rate
-    min_usd = min_tl / usd_rate
-    max_usd = max_tl / usd_rate
-    
-    avg_local = avg_tl / loc_rate
-    min_local = min_tl / loc_rate
-    max_local = max_tl / loc_rate
-    
     k1, k2, k3, k4 = st.columns(4)
-    
     k1.metric("Toplam Ürün", f"{cnt} adet")
     
     k2.markdown(f"""
     <div style='background-color: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 15px; text-align: center;'>
         <p style='color: #8b949e; font-size: 14px; margin: 0;'>Ortalama</p>
         <p style='color: #ffffff; font-size: 28px; font-weight: bold; margin: 5px 0;'>{avg_tl:,.0f}₺</p>
-        <p style='color: #8b949e; font-size: 12px; margin: 0;'>${avg_usd:,.2f} | {avg_local:,.2f} {curr}</p>
+        <p style='color: #8b949e; font-size: 12px; margin: 0;'>${avg_tl/usd_rate:,.2f} | {avg_tl/loc_rate:,.2f} {curr}</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -514,7 +385,7 @@ if st.session_state['search_results']:
     <div style='background-color: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 15px; text-align: center;'>
         <p style='color: #8b949e; font-size: 14px; margin: 0;'>En Düşük</p>
         <p style='color: #ffffff; font-size: 28px; font-weight: bold; margin: 5px 0;'>{min_tl:,.0f}₺</p>
-        <p style='color: #8b949e; font-size: 12px; margin: 0;'>${min_usd:,.2f} | {min_local:,.2f} {curr}</p>
+        <p style='color: #8b949e; font-size: 12px; margin: 0;'>${min_tl/usd_rate:,.2f} | {min_tl/loc_rate:,.2f} {curr}</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -522,24 +393,25 @@ if st.session_state['search_results']:
     <div style='background-color: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 15px; text-align: center;'>
         <p style='color: #8b949e; font-size: 14px; margin: 0;'>En Yüksek</p>
         <p style='color: #ffffff; font-size: 28px; font-weight: bold; margin: 5px 0;'>{max_tl:,.0f}₺</p>
-        <p style='color: #8b949e; font-size: 12px; margin: 0;'>${max_usd:,.2f} | {max_local:,.2f} {curr}</p>
+        <p style='color: #8b949e; font-size: 12px; margin: 0;'>${max_tl/usd_rate:,.2f} | {max_tl/loc_rate:,.2f} {curr}</p>
     </div>
     """, unsafe_allow_html=True)
     
     st.markdown("---")
     
+    # Kaynak dağılımı
     if "Kaynak" in df.columns:
-        source_counts = df["Kaynak"].value_counts()
+        sources = df["Kaynak"].value_counts()
         st.markdown("### 📊 Veri Kaynakları")
-        cols = st.columns(len(source_counts))
-        for idx, (source, count) in enumerate(source_counts.items()):
-            cols[idx].metric(source, f"{count} ürün")
+        cols = st.columns(len(sources))
+        for i, (src, cnt) in enumerate(sources.items()):
+            cols[i].metric(src, f"{cnt} ürün")
         st.markdown("---")
     
     st.dataframe(
         df,
         column_config={
-            "Link": st.column_config.LinkColumn("Link", display_text="🔗 Git"),
+            "Link": st.column_config.LinkColumn("🔗 Link", display_text="Git"),
             f"Fiyat ({curr})": st.column_config.NumberColumn(f"Fiyat ({curr})", format="%.2f"),
             "USD": st.column_config.NumberColumn("USD ($)", format="$%.2f"),
             "TL": st.column_config.NumberColumn("TL (₺)", format="%.2f ₺")
