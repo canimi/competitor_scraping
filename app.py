@@ -247,11 +247,16 @@ if btn_start:
         st.error("⚠️ Hiçbir markada ürün bulunamadı")
         st.session_state['search_results'] = None
 
-# --- RENDER ---
+# --- RENDER SEKSİYONU (Metrikleri güncelle) ---
 if st.session_state['search_results']:
     res = st.session_state['search_results']
     df = res["df"]
     curr = res["curr"]
+    
+    # Kurları al
+    rates = get_rates()
+    usd_rate = rates.get("USD", 1) if rates else 1
+    loc_rate = rates.get(curr, 1) if rates else 1
     
     # Metrikler
     cnt = len(df)
@@ -259,13 +264,47 @@ if st.session_state['search_results']:
     min_tl = df["TL"].min()
     max_tl = df["TL"].max()
     
+    # Yerel ve USD hesapla
+    avg_usd = avg_tl / usd_rate
+    min_usd = min_tl / usd_rate
+    max_usd = max_tl / usd_rate
+    
+    avg_local = avg_tl / loc_rate
+    min_local = min_tl / loc_rate
+    max_local = max_tl / loc_rate
+    
     k1, k2, k3, k4 = st.columns(4)
+    
     k1.metric("Toplam Ürün", f"{cnt} adet")
-    k2.metric("Ortalama", f"{avg_tl:,.0f}₺")
-    k3.metric("En Düşük", f"{min_tl:,.0f}₺")
-    k4.metric("En Yüksek", f"{max_tl:,.0f}₺")
+    
+    k2.markdown(f"""
+    <div style='background-color: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 15px; text-align: center;'>
+        <p style='color: #8b949e; font-size: 14px; margin: 0;'>Ortalama</p>
+        <p style='color: #ffffff; font-size: 28px; font-weight: bold; margin: 5px 0;'>{avg_tl:,.0f}₺</p>
+        <p style='color: #8b949e; font-size: 12px; margin: 0;'>${avg_usd:,.2f} | {avg_local:,.2f} {curr}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    k3.markdown(f"""
+    <div style='background-color: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 15px; text-align: center;'>
+        <p style='color: #8b949e; font-size: 14px; margin: 0;'>En Düşük</p>
+        <p style='color: #ffffff; font-size: 28px; font-weight: bold; margin: 5px 0;'>{min_tl:,.0f}₺</p>
+        <p style='color: #8b949e; font-size: 12px; margin: 0;'>${min_usd:,.2f} | {min_local:,.2f} {curr}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    k4.markdown(f"""
+    <div style='background-color: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 15px; text-align: center;'>
+        <p style='color: #8b949e; font-size: 14px; margin: 0;'>En Yüksek</p>
+        <p style='color: #ffffff; font-size: 28px; font-weight: bold; margin: 5px 0;'>{max_tl:,.0f}₺</p>
+        <p style='color: #8b949e; font-size: 12px; margin: 0;'>${max_usd:,.2f} | {max_local:,.2f} {curr}</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     st.markdown("---")
+    
+    # Tablo aynı kalacak...
+
     
     st.dataframe(
         df,
@@ -281,3 +320,4 @@ if st.session_state['search_results']:
     
     csv = df.to_csv(index=False).encode('utf-8-sig')
     st.download_button("💾 CSV İndir", csv, f"lcw_{sel_country}.csv", "text/csv")
+
