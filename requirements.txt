@@ -4,4 +4,6 @@ requests
 deep-translator
 apify-client
 playwright==1.40.0  
+beautifulsoup4
+lxml
 
