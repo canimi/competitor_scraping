@@ -109,10 +109,22 @@ def validate_relevance(product_name_local, query_english):
 def search_sonar(brand, product_local, product_english, country, currency_code, hardcoded_url, api_key):
     url = "https://api.perplexity.ai/chat/completions"
     
+    # Marka bazlı özel talimatlar
+    if brand in ["Sinsay", "Pepco"]:
+        extra_instruction = f"""
+IMPORTANT: {brand} website uses dynamic loading. 
+- Try direct category URLs like: {hardcoded_url}home-textiles/ or {hardcoded_url}bathroom/
+- Look for product grids/lists
+- Extract ALL visible items with prices in {currency_code}
+"""
+    else:
+        extra_instruction = ""
+    
     system_msg = "You are a bulk data scraper. Your job is to EXTRACT LISTS of products, not just one item."
     
     user_msg = f"""
 ACTION: Go to the '{product_english}' category on {hardcoded_url} (or search for '{product_local}').
+{extra_instruction}
 
 TASK: List AS MANY diverse products as possible found in that category.
 - Don't stop at 1 result. I need a Price List.
@@ -134,8 +146,8 @@ OUTPUT JSON:
     payload = {
         "model": "sonar",
         "messages": [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        "temperature": 0.1,
-        "max_tokens": 3000
+        "temperature": 0.2,  # 0.1'den 0.2'ye çık biraz daha yaratıcı olsun
+        "max_tokens": 4000   # 3000'den 4000'e çık daha fazla ürün döndürsün
     }
     
     headers = { "Authorization": f"Bearer {api_key}", "Content-Type": "application/json" }
@@ -152,6 +164,7 @@ OUTPUT JSON:
                 return json.loads(clean)
         return None
     except: return None
+
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -320,4 +333,5 @@ if st.session_state['search_results']:
     
     csv = df.to_csv(index=False).encode('utf-8-sig')
     st.download_button("💾 CSV İndir", csv, f"lcw_{sel_country}.csv", "text/csv")
+
 
