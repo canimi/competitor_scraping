@@ -3,4 +3,5 @@ pandas
 requests
 deep-translator
 apify-client
-playwright
+playwright==1.40.0  
+
