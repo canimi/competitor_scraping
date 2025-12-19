@@ -1,4 +1,17 @@
-streamlit
-pandas
-requests
-deep-translator
+# LCW Global Intelligence v2.0 - Requirements
+# Python 3.9+ gerekli
+
+# Ana framework
+streamlit>=1.28.0
+
+# Veri işleme
+pandas>=2.0.0
+
+# HTTP istekleri
+requests>=2.31.0
+
+# Çeviri
+deep-translator>=1.11.4
+
+# Fuzzy matching (opsiyonel ama önerilen)
+rapidfuzz>=3.5.0
